@@ -399,6 +399,27 @@ const PLACEHOLDER_WORDS = /(填|占位|待填|示例|你的|自己的|此处|这
 //   新口径（复核线已实测）：占位词前面**不许出现 ASCII 字母数字**（允许 `**` / `<` / 引号这类结构符）
 //   ⇒ 上面三反例全红，而 `密码：**留空 = …`、`"password": "<在这里填你自己的>"`、`凭据：待填` 仍清。
 const PLACEHOLDER_AT_START = new RegExp('^[^A-Za-z0-9]*?' + PLACEHOLDER_WORDS.source);
+// ★★ 2026-09-26 23:5x（协调线第九代派单 ③1）：**占位词只锚了"前"、没锚"后"** —— r4①C 的口径是
+//   "占位词前不许出现 ASCII 字母数字"，于是**占位词后面接着一个真值**照样清：
+//     `密码：示例hunter2` ⇒ hard = 0（实测复现）；把 `示例` 去掉 ⇒ hard = 1 ⇒ 清掉它的仍是**那两个汉字**。
+//   新口径：占位词之后**跳过结构符**（空白 / `*` `=` `<` `>` 引号 / 括号 / 冒号分号逗号点 / `-`）
+//   若**紧接着**就是 ASCII 字母数字 ⇒ **不算占位词**，值按正常规则继续判（真值 ⇒ 红，fail-closed）。
+//   ⚠ 为什么**不**写成协调线原话的"之后不得再出现 ASCII 字母数字串"（更宽）：那会把一条**既有"必须清"**
+//     的实测夹具打红 —— `密码：**留空 = 用镜像装 noVNC`（占位词后是分隔符 ＋ 中文散文，只是文中带个拉丁词）。
+//     按纪律**不许把断言改松**，所以取了"跳过结构符后紧邻"这一版：它**仍然覆盖** ③1 点名的两例
+//     （`示例hunter2` 与 `示例 hunter2`），且不动任何既有夹具。**要更宽的那版请裁决**（见汇报）。
+const PLACEHOLDER_THEN_VALUE = new RegExp(
+  PLACEHOLDER_WORDS.source + '[ \\t*=<>\'"_`()\\[\\]:;,.\\-]*[A-Za-z0-9]');
+// ★★ 2026-09-26 23:5x（协调线第九代派单 ③2）：**跨行拼接**。源代码里把值用 `+` 拆到下一行是常见写法：
+//     `'密码：'` ↵ `+ 'hunter2'`  ⇒ 本行取到的值只剩一个引号 ⇒ 被"去引号后为空 ⇒ 没值"当场放行（假绿，
+//   实测复现）。⇒ 值**为空或只剩引号**时，往**下一非空行**找字符串字面量续行，把里面的文本当值接着判。
+//   找不到续行 ⇒ 仍按"没值"（不动既有行为）。
+function concatContinuation(text, m) {
+  const nx = text.slice(m.index + m[0].length).split('\n').slice(1).find((l) => l.trim());
+  if (!nx) return '';
+  const c = /^[ \t]*\+\s*(['"`])([^'"`]*)\1/.exec(nx);
+  return c ? c[2].trim() : '';
+}
 function valueLooksReal(text, m, nextLinePolicy) {
   let v = (m[1] ?? '').trim();
   if (!v) {
@@ -414,7 +435,12 @@ function valueLooksReal(text, m, nextLinePolicy) {
     }
   }
   if (/^[#*`>|-]/.test(v)) return false;
-  if (PLACEHOLDER_AT_START.test(v)) return false;   // ★ r4①C：**值首**才认占位词（旧写法任意位置命中就清）
+  if (!v || /^["'`]+$/.test(v)) {                   // ★ ③2：本行值空/只剩引号 ⇒ 试**跨行拼接**续行
+    const c = concatContinuation(text, m);
+    if (c) v = c;
+  }
+  // ★ r4①C ＋ ③1：占位词必须落在**值首**，且**后面不许紧跟真值**（跳过结构符后仍是 ASCII 字母数字 ⇒ 不是占位）
+  if (PLACEHOLDER_AT_START.test(v) && !PLACEHOLDER_THEN_VALUE.test(v)) return false;
   // ★ 空值占位（2026-09-26 22:0x，实测补）：`"authToken": ""` / `"accessToken": ""` / `"consoleToken": ""`
   //   是模板档里**只有字段名、没有值**的形状 —— D2 裁决原文就是"**空值行 = 占位，不许当值**"。
   //   旧逻辑靠"值必须含 CJK 才算值"顺手躲过；新边界"其余一律红"会把 `""`（两个引号）判红 ⇒
@@ -740,6 +766,16 @@ function runSelftest() {
   //   ★ 这正是"不许把断言改小"那条纪律的现场：上一版我把它从断言里拿掉了，于是打回。
   check('①h 必须红：`密码 ＋ 见 README`（含空格 ＋ 含 ASCII ⇒ 不属"纯 CJK 散文"那支）', has(scan('密码' + '：见 README\n', false), '密钥形状（中文·带值）'));
   check('①h 占位词表：`凭据 ＋ 待填` ／ `密钥 ＋ 示例` ⇒ 不红', CN('凭据' + '：待填\n密钥' + '：示例\n').hardCount === 0);
+  // ★★ 2026-09-26 23:5x（第九代派单 ③1 ③2 —— 判据**只严不松**，每条都带反向/必须清对照）
+  check('③1 必须红：占位词**后紧跟**真值 `密码 ＋ 示例hunter2`（旧口径 hard = 0 —— 清它的是那两个汉字）',
+    has(CN('密码' + '：示例hunter2\n'), '密钥形状（中文·带值）'));
+  check('③1 必须红：占位词后隔一个空格的真值 `密码 ＋ 示例 hunter2`（跳过结构符后紧邻 ASCII 字母数字）',
+    has(CN('密码' + '：示例 hunter2\n'), '密钥形状（中文·带值）'));
+  check('③1 反向·必须**仍清**：占位词后是分隔符＋中文散文 `密码 ＋ **留空 = 用镜像装 noVNC`（★ 不许因此翻红）',
+    CN('密码' + '：**留空 = 用镜像装 noVNC\n').hardCount === 0);
+  check('③2 必须红：**跨行拼接** `密码 ＋ 引号` ↵ `+ 引号hunter2引号`（旧口径 hard = 0）',
+    has(CN("密码" + "：'\n  + 'hunter2'\n"), '密钥形状（中文·带值）'));
+  check('③2 反向对照：同行真值 `密码 ＋ hunter2` 仍硬红', has(CN('密码' + '：hunter2\n'), '密钥形状（中文·带值）'));
   check('①h ★ 基线：`deploy/linux/.env.example` 必须 **0 处 / exit 0**（这条"要被信的门槛"现在名副其实）', (() => {
     try { return scan(fs.readFileSync(require('node:path').join(ROOT, 'deploy', 'linux', '.env.example'), 'utf8'), true).hardCount === 0; } catch { return false; }
   })());
@@ -822,11 +858,13 @@ function runSelftest() {
   //     就**整行丢弃**：`const zzBeta = 'check( 密码：hunter2';` ⇒ **绿**（含 `re: /` 同理）
   //     —— 等于"把字样写进一行就给自己开了后门"。⇒ 两条豁免**一律行首锚定**：
   //     `^\s*check\(` / `^\s*re: /`（行首合法用法不误红；行中出现的 ⇒ 该行照扫 ⇒ 必须红）。
-  //     ⚠ 配合一条**数据行豁免**（同样行首锚定）：规则表那 15 行是
-  //     `{ label: '…', re: /…/, … }` 形状，`re:` **本来就不在行首** ⇒ 只锚 `re: /` 会让整张规则表
-  //     变成"可执行代码行"被自扫（实测：`密钥形状（英文·带值）` 的 `why` 里有中文口令字面）。
-  //     We exempt the rule-table lines by their own line-start prefix, which the attack cannot forge
-  //     (attack lines start with `const …`), and it is strictly **narrower** than the old substring rule.
+  //     ⚠ **这里没有"数据行豁免"**（2026-09-26 23:5x 第九代派单 ③5① 订正）：旧注释声称"规则表那 15 行
+  //     靠一条**数据行豁免**过自扫"，而 `SELF_CODE_EXEMPT` **只有下面那两条 ＋ 注释行 `^\s*//`**
+  //     —— 代码里从来不存在第三条"数据行"豁免。规则表能过 ⑤，靠的是**把 `why` 里会触发规则的
+  //     字面改写成安全形状**（见各条 `why`），不是靠豁免 ⇒ **改规则表的人要自己盯住这一条**。
+  //     We exempt only the two line-start prefixes above (plus `^\s*//` comment lines)；there is no
+  //     data-row exemption. Rule-table rows survive the self-scan because their `why` literals were
+  //     rewritten — strictly **narrower** than the old substring rule.
   let self = null;
   try {
     self = scanFile(path.join(HERE, 'scan-secrets.cjs'), R, buildAllow(empty));
@@ -904,7 +942,12 @@ function runSelftest() {
   //      **先自首**（在报告/留言里说明为什么动）**并给新旧对照读数** —— 具体做法：把
   //      `DSH_SELFTEST_FLOOR=<旧值>` 与**默认值**两次 run 的输出一起贴出来，缺一不可；
   //      只改数字、不给两次读数 = 打回。
-  const SELFTEST_FLOOR = Math.max(93, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
+  //   ★ 2026-09-26 23:5x（第九代派单 ③1 ③2）**自首**：93 ⇒ **98**。改的是哪条判据：占位词"后面"
+  //     也要锚（值首占位词后紧跟真值 ⇒ 不再清）＋ 值只剩引号时看下一行的 `+ '…'` 拼接续行。
+  //     为什么抬：本轮新增 5 条夹具（3 条必须红 ＋ 1 条必须仍清 ＋ 1 条反向对照）⇒ 实跑 93 → 98。
+  //     两侧读数：`DSH_SELFTEST_FLOOR=93`（**旧值**）⇒ 98 通过 / 0 失败（**绿**，证明"变的是下限不是断言"）；
+  //     默认档 ⇒ 98/98（下限 98）；`DSH_SELFTEST_FLOOR=999` ⇒ **红**（项数下限闸当场点名"有判据根本没跑"）。
+  const SELFTEST_FLOOR = Math.max(98, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
   const ranParts = `通过 ${pass} ＋ 失败 ${fails.length} ＋ 跳过 ${skips.length}`;
   const ran = pass + fails.length + skips.length;   // ★ 先算 ran：下面 push 进 fails 的是"闸自己"，不算判据项
   if (ran < SELFTEST_FLOOR) {
@@ -976,8 +1019,14 @@ function main(argv) {
     console.log('');
   }
   console.log(report.pass
-    ? `✅ 发布前安全扫描：${report.totals.files} 个文件、全部**硬**禁形状 0 处${report.totals.soft ? `（另有提示级/降级 ${report.totals.soft} 处，见上）` : ''}`
-    : `❌ 发布前安全扫描：${report.totals.files} 个文件、共 ${report.totals.hard} 处命中 —— **公开前必须处理掉**`);
+    ? `✅ 发布前安全扫描：扫了 ${report.totals.files} 个 **markdown** 文件、全部**硬**禁形状 0 处${report.totals.soft ? `（另有提示级/降级 ${report.totals.soft} 处，见上）` : ''}`
+    : `❌ 发布前安全扫描：扫了 ${report.totals.files} 个 **markdown** 文件、共 ${report.totals.hard} 处命中 —— **公开前必须处理掉**`);
+  // ★★ 2026-09-27（协调线第九代派单 · 顺手③）：**文案如实**。旧文案只写"N 个文件"，读起来像"整包都扫过了" ——
+  //   实测 `node tools\scan-secrets.cjs generated-export-a` 只覆盖 **4/78 份**（目录档只吃 `.md`／`.markdown`，
+  //   见 `TEXT_EXT`）。协调线裁决：**改文案、不扩包**（扩到全包会带来一批新假红，是另一件事、单独立项）。
+  //   ⚠ 所以：这条读数**不等于"整包都扫过了"**，也**不许**被当成整包交付闸。
+  console.log('   ⚠ **本次只扫 markdown（.md / .markdown）** —— 同一目录里的脚本 / HTML / JSON / 配置等**没有被扫**；'
+    + '这条读数**不等于"整包扫过了"**（整包交付闸是打包工具对**产物清单**那一遍，别拿这一行当结论）。');
   console.log(`   档位：${REPO_MODE ? '全仓档（公开前门槛读数）' : '单文件/指定目标'}`
     + `｜模板类文件 ${report.totals.templateFiles} 个（降级 字段名 ${report.totals.downgraded.wording} · 量级数字 ${report.totals.downgraded.number}）`
     + `｜判据不许空过：拿 docs/HANDOFF.md 试跑必须报出命中、退出码 1；改判据跑 --selftest`);

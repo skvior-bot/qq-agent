@@ -95,8 +95,8 @@
 //   ★ **判据⑨ 未知参数**：不在参数面里的一律 ⇒ 打印用法 ＋ exit 2，且**跑在任何动作之前**（见文件头）。
 //   ⚠ 残余（**只记不修**，2026-09-26 22:xx）：① 名叫 `state` 的**硬链接文件** —— 跳过名单在硬链接检查
 //     **之前** `continue` ⇒ 它看不见，但**也不会进包**（跳过的条目压根不入候选）⇒ **不漏**，低危；
-//     ② `qq-bridge\state\_tmp\export-a-scan.json` **从不清理**（跑过一次 `--selftest` 就留一份）
-//     ⇒ 无法唯一归因（并行作者会话可能重叠），故**未删**；删它零风险。
+//     ② `qq-bridge\state\_tmp\export-a-scan.json` **从不清理** ⇒ ★ **已修**（2026-09-26 23:5x 第九代派单 ③6②）：
+//     口径 = **谁写谁清、一次调用一清、self-check 不看它**（先读进内存再删 ⇒ 失败路径也删）。代码见 `scanPaths()`。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -142,8 +142,13 @@ function rootShift() {
     console.error(`   实际加载的模块：${S.urlPath}　⇒ 本次真正会检查的仓库根：${S.rootModule}`);
     console.error('   为什么：Node 把**主模块** realpath 到链接（junction/symlink）指向的那棵树 ⇒');
     console.error('           遍历根、DOCS、身份文件全跟着换了一棵树 ⇒ 判据⑦ 一个链接都收不到，却照样 exit 0。');
-    console.error('   处置（二选一）：① 用**真实路径**调它，别经 junction/symlink 路由；');
-    console.error('                  ② 加 `--preserve-symlinks-main`（那时 import.meta.url 才按你敲的路径算，根就一致了）。');
+    console.error('   处置（★ 两条的代价差很远）：① **首选** —— 用**真实路径**调它，别经 junction/symlink 路由；');
+    console.error('                  ② 加 `--preserve-symlinks-main`（那时 import.meta.url 才按你敲的路径算，根就一致了）');
+    console.error('                     ⚠ **只加这个 flag 往往还不够**（第九代派单 ③4 补全）：你点名的那棵树里通常**就有那条链接**');
+    console.error('                     （你正是经它路由过来的）⇒ 接着会撞**判据⑦「候选树里有链接」⇒ exit 4**；');
+    console.error('                     要**再加 `--allow-links`** 才 exit 0，而放行**仍不跟进**链接目标');
+    console.error('                     ⇒ 进包的只剩你点名那棵树里**真实存在**的那几份（实测：整棵 tools\\ 都是链接时只剩 **7 份**）。');
+    console.error('                     ⇒ 只想"先看一眼"就用 `--dry-run`，**别拿这个 flag 去凑绿**。');
     process.exit(2);
   }
 }
@@ -209,6 +214,10 @@ const DOCS = [
   ['README.md', '对外主文档（根）'],
   ['CONTRIBUTING.md', '★ 贡献/自建说明（对外版；与 README 同级，2026-09-26 主人批准）'],
   ['LICENSE', '★ MIT 许可全文（根；2026-09-26 主人拍板"许可定为 MIT"，与 README/CONTRIBUTING 同级）'],
+  ['.gitattributes', '★ 行尾写死（.cmd/.bat = CRLF，其余 LF；2026-09-26 加，与根文档同级）'],
+  ['docs/安装.md', '★ **对外安装文档**（面向使用者；2026-09-26 协调线第九代派单 ① —— 从内部 4 份改写、去掉令牌链/端口/台账/花费）'],
+  ['docs/工具一览.md', '★ **对外工具一览**（面向使用者；同上。⚠ 只列脚本与"什么时候用"，不抄易过期说明）'],
+  ['docs/省词元与稳定性.md', '★ **对外策略文档**（为什么做这个 ＋ 省钱口径 ＋ 稳定性踩坑；2026-09-27 协调线批次 C，主人已批"只要不涉及我的账号信息"；该批微调改名以避开硬禁字样）'],
   ['agent.config.example.json', '环境层模板（纯占位）'],
 ];
 const EXCLUDE_A = [
@@ -429,7 +438,16 @@ function scanPaths(paths) {
   const fd = fs.openSync(f, 'w');   // ⚠ 文件 fd（沙箱里管道 EPERD/EPERM；PS 的 `>` 是 UTF-16）
   const r = spawnSync(process.execPath, [path.join(ROOT, 'tools', 'scan-secrets.cjs'), '--json', ...paths], { cwd: ROOT, stdio: ['ignore', fd, fd] });
   fs.closeSync(fd);
-  try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); } catch (e) { return { err: `扫描结果读不动（退出码 ${r.status}）：${e.message}`, files: [] }; }
+  // ★★ 2026-09-26 23:5x（第九代派单 ③6②）：**用完即清**。清理口径（可执行的那一版就是这段代码）：
+  //   · **谁清**：写它的那一方 —— 就是本函数（同一个函数内闭环，不留给人记）。
+  //   · **什么时候**：**每次调用结束时**，且**先读进内存再删** ⇒ 子进程失败/JSON 读不动时也照删。
+  //   · **self-check 看不看它**：**不看**。它的生命周期 = 一次调用，是**瞬态中间产物**；`state\_tmp\` 整体
+  //     属于"可整清"目录，自检只盯 `state\` 里的生产残留（它的存在与否都不该影响任何判据）。
+  //   · A 档里**永远不会有它**（既不在 DOCS 也不在候选目录里）。
+  let txt = '';
+  try { txt = fs.readFileSync(f, 'utf8'); } catch { txt = ''; }
+  try { fs.rmSync(f, { force: true }); } catch { /* 删不掉不影响本次结果；下次会被覆盖 */ }
+  try { return JSON.parse(txt.replace(/^\uFEFF/, '')); } catch (e) { return { err: `扫描结果读不动（退出码 ${r.status}）：${e.message}`, files: [] }; }
 }
 
 function runSelftest() {
@@ -575,6 +593,16 @@ function runSelftest() {
       !!hard && hard.links.some((l) => l.startsWith(DOCS[1][0] + '（DOCS 路径·硬链接）')) && !hard.list.some((c) => c.rel === DOCS[1][0]),
       det);
   }
+  // ★ ⑬ 降级路径的**判据**（2026-09-27 微批 3）：只有"换名类"错误码才许走降级。
+  //   立案现场：本机 `renameSync(成品目录 → .old-<pid>)` 稳定 EPERM，而**删同一个目录成功** ⇒
+  //   没有降级路径时成品会**停在旧字节**，而"绿"读数照旧打出来（假绿的典型形状；主人差点据此 push）。
+  //   ⚠ **边界如实说**：本项只打"哪个错误码算换名被拒"这条**判据**；"换名被拒 ⇒ 删旧目录再落盘"这个
+  //     **动作**由**真机反向对照**验证（拿住成品目录 ⇒ 工具必须非零退出 ＋ 印出"没有换盘"自曝行 ＋ 成品 mtime 一字未动）。
+  //   ★ 断言**两边都有**（三个码必须真、三个别的必须假）⇒ 判据被写成恒真或恒假都过不了。
+  ck('⑬ ★ 降级只在"换名被拒"的错误码上走（EPERM/EACCES/EBUSY 真；ENOENT/EXDEV/无码 假）',
+    isRenameDenied('EPERM') === true && isRenameDenied('EACCES') === true && isRenameDenied('EBUSY') === true
+    && isRenameDenied('ENOENT') === false && isRenameDenied('EXDEV') === false && isRenameDenied(undefined) === false,
+    `EPERM/EACCES/EBUSY ⇒ ${['EPERM', 'EACCES', 'EBUSY'].map((c) => isRenameDenied(c)).join('/')} · ENOENT/EXDEV/无码 ⇒ ${['ENOENT', 'EXDEV', undefined].map((c) => String(isRenameDenied(c))).join('/')}`);
   // ★ 项数下限闸（2026-09-26 21:5x 立；★ 22:xx 按复核线 r3 §3 **改口径**）：治"**静默跳过一条判据**"这一整类。
   //   ★★ 口径（六条发现里的第①⑤条）：**比 `ran`（本轮实际跑了几条），不比 `pass`（过了几条）** ——
   //      比 `pass` 时**真失败**（例如 76 通过/4 失败）也会触发它，并给出**错误诊断**"有判据被静默跳过"
@@ -586,7 +614,9 @@ function runSelftest() {
   //   ★ 下限数字**只写一处**（就这一行）；**来源** = 本批 `--selftest` 的实测项数。
   //     ★★ **改这一行 = 改判据**：动它必须走"守门人改动"纪律 —— **先自首 ＋ 给新旧对照读数**
   //     （`DSH_SELFTEST_FLOOR=<旧值>` 与默认值各跑一次，把两次的输出贴在一起）。别默默往下调。
-  const SELFTEST_FLOOR = Math.max(19, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
+  const SELFTEST_FLOOR = Math.max(20, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
+  //   ★ 2026-09-27 微批 3 自首：19 → **20**（新增 ⑬ 一条）⇒ 按纪律**抬严**，并附新旧对照读数：
+  //     改前 `--selftest` = **19 项全通过**（floor 19）；改后 = **20 项全通过**（floor 20）。
   const ran = pass + fails.length + skipCount;
   if (ran < SELFTEST_FLOOR) fails.push(`项数下限闸：本轮只跑了 ${ran} 项 < 下限 ${SELFTEST_FLOOR}（有判据被静默跳过 ⇒ 不许报绿）`);
   if (skipCount) console.log(`  ⏭ 本轮有 ${skipCount} 条"不适用"（已显式记账，既不计通过也不静默）：${skips.join('；')}`);
@@ -642,6 +672,10 @@ if (links.length) {
 // ★ 判据⑧：候选数量守恒对账（差值不是 0 ⇒ 拒交付 exit 4，且**一个东西都不写**）
 {
   const sum = cand.length + skipped.length + links.length;
+  // ★★ 2026-09-27 微批 3：**读数口径自曝** —— 下面这几行"绿"读数**都算在暂存目录上**，
+  //   而"有没有真的换盘"是**另一件事**（换盘失败时它们照样是绿的 —— 实测踩过，详见文件末判据⑥）。
+  //   ⇒ 把作用域印在读数**前面**，并把判读口收到**末行【落盘】**。
+  if (!DRY) log('★ 口径：下面这些读数（**候选守恒 / L1 / L1exact / L2 / 份数**）**全部算在暂存目录上** —— 是否真的换盘、成品是不是新的，**只看末行【落盘】**。');
   log(`【候选对账】候选 ${seen} 项 = 进包 ${cand.length} ＋ 排除 ${skipped.length}${skipped.length ? '（' + skipped.map((s) => s.rel).join('、') + '）' : ''} ＋ 链接 ${links.length}${links.length ? '（' + links.join('、') + '）' : ''}`);
   if (!conserved({ seen, cand: cand.length, skipped: skipped.length, links: links.length })) {
     console.error(`❌ 候选对账不上：进包 ${cand.length} ＋ 排除 ${skipped.length} ＋ 链接 ${links.length} = ${sum} ≠ 候选 ${seen} ⇒ 拒交付（说明有人把某一类漏掉了）`);
@@ -735,20 +769,55 @@ if (!DRY && (l1 > 0 || l1exact > 0)) {
 }
 if (!DRY && touched) { rmTree(STAGE); console.error('❌ 原件被改过 ⇒ 不换名（暂存目录已删）'); process.exit(3); }
 // ★ 判据⑥的第二半：**换名**（旧成品先改名成 .old-<pid> ⇒ 暂存目录改名成目标 ⇒ 删掉旧的）
+//   ★★ 2026-09-27 微批 3 加**降级路径**（立案现场）：本机实测 `fs.renameSync(OUT, old)` 会**稳定**报
+//      `EPERM`（PowerShell 的 `Rename-Item` 对同一件事也是 Access denied），而**删掉同一个目录却成功**
+//      ⇒ 换名被拒时**不再放弃**：删旧目录（那些字节本来就要被换掉）→ 再把暂存目录改名成目标。
+//      ⚠ **只在"换名类"错误码上降级**（EPERM / EACCES / EBUSY）；别的错误照旧失败 —— 降级不许掩盖真问题。
+//      ⚠ 降级再失败 ⇒ **一个"绿"字都不许留**：把人卡在哪一步、旧成品还在不在、新成品在哪，全部印清楚。
+//   ★ 本判据的**纯函数**部分可被 `--selftest` 直接打（⑬）；**动作**部分靠真机反向对照验（见 ⑬ 注释）。
+/** 这个错误码算不算"换名被拒"（函数声明 ⇒ 提升，`--selftest` 能在主流程之前打它）。 */
+function isRenameDenied(code) { return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'; }
 if (!DRY) {
   const old = `${OUT}.old-${process.pid}`;
+  const outExisted = fs.existsSync(OUT);
+  const oldMtime = outExisted ? fs.statSync(OUT).mtime.toISOString() : null;
+  const oldWhat = outExisted ? `**成品仍是旧的（mtime=${oldMtime}）**` : '**成品目录本来就不存在**';
   rmTree(old);
+  let how = '换名';
   try {
-    if (fs.existsSync(OUT)) fs.renameSync(OUT, old);
+    if (outExisted) fs.renameSync(OUT, old);
     fs.renameSync(STAGE, OUT);
   } catch (e) {
-    console.error(`❌ 换名失败：${e.message}`);
-    if (!fs.existsSync(OUT) && fs.existsSync(old)) { try { fs.renameSync(old, OUT); } catch { } }   // 把旧成品换回来
-    rmTree(STAGE);
-    process.exit(3);
+    // ① 老行为：先把"已经让位"的旧成品换回来（换名可能失败在第二步）
+    if (!fs.existsSync(OUT) && fs.existsSync(old)) { try { fs.renameSync(old, OUT); } catch { } }
+    if (!isRenameDenied(e.code)) {
+      console.error(`❌ 换名失败（${e.code || '无错误码'}）：${e.message}`);
+      console.error(`⚠ **本次没有换盘 ⇒ ${oldWhat}**；上面那些"绿"读数**全部算在暂存目录上**，**不代表已发布**。`);
+      console.error('   处置：这是"换名类"以外的错误 ⇒ 按原样失败，先查清再重跑（别拿降级去凑绿）。');
+      rmTree(STAGE);
+      process.exit(3);
+    }
+    // ② 降级：删旧目录 → 落盘（本机实测：换名被拒时删除往往还成功）
+    how = '降级（换名被拒 ⇒ 删旧目录再落盘）';
+    log(`⚠ 换名被拒（${e.code}）⇒ 走**降级路径**：先删旧成品目录，再把暂存目录落盘`);
+    if (fs.existsSync(OUT) && !rmTree(OUT)) {
+      console.error(`❌ 换名被拒（${e.code}）、降级**也删不掉**旧成品 ⇒ **本次没有换盘 ⇒ ${oldWhat}**。`);
+      console.error(`   上面那些"绿"读数**全部算在暂存目录上**（${path.relative(ROOT, STAGE)}），**不代表已发布**。`);
+      console.error('   处置：确认没有别的进程占着成品目录（它的当前目录就是那里 / 里面还有文件被打开）后重跑本工具。');
+      rmTree(STAGE);
+      process.exit(3);
+    }
+    try { fs.renameSync(STAGE, OUT); }
+    catch (e2) {
+      console.error(`❌ 降级路径的最后一步也失败（${e2.code || '无错误码'}）：${e2.message}`);
+      console.error(`⚠ **旧成品已被删除、新成品没能落盘** ⇒ 现在 ${path.relative(ROOT, OUT)} 不存在。`);
+      console.error(`   新成品**完好在暂存目录**：${path.relative(ROOT, STAGE)} —— 确认后手工改名成 ${path.basename(OUT)} 即可（本次**不删它**）。`);
+      process.exit(3);
+    }
   }
   rmTree(old);
-  log(`✅ 换名完成：${path.relative(ROOT, OUT)}\\（${writes.length} 份）`);
+  log(`✅ 落盘完成【${how}】：${path.relative(ROOT, OUT)}（${writes.length} 份）`);
+  log(`   ★ 成品 mtime = ${fs.statSync(OUT).mtime.toISOString()}`);
 }
 
 if (JSON_OUT) console.log(JSON.stringify({ out: path.relative(ROOT, OUT), dryRun: DRY, files: writes.length, replaced, l1, l1exact, l2, soft, links, excluded: EXCLUDE_A.map(([f, w]) => ({ file: f, why: w })), perFile, manifest: rows }, null, 2));

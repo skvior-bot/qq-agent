@@ -59,7 +59,11 @@ function mkRepo(dir) {
   // ★ DOCS 清单（与 export-a.mjs 的 DOCS **逐条对应**；改了那边这里也要跟）
   //   ⚠ 2026-09-26 22:5x 甲案：那边的 docs 收到 **3 份**（README/CONTRIBUTING/LICENSE）＋示例配置
   //     ⇒ 这里同步（原来造的 4 份内部文档已不在清单里，留着会让夹具与清单对不上）。
-  for (const rel of ['README.md', 'CONTRIBUTING.md', 'LICENSE', 'agent.config.example.json']) {
+  //   ★★ 2026-09-26 23:5x（第九代派单 ②）**又一次漂移，当场红 10 条**：那边 DOCS 加了根 `.gitattributes`，
+  //     这边没跟 ⇒ 夹具仓"DOCS 声明了、盘上没有" ⇒ 除 ⑫ 外**整片红**（不是断言坏了，是夹具与清单对不上）。
+  //     ⇒ 记一条：**改 `export-a.mjs` 的 DOCS ⇒ 本行必须同步**（这条注释就是给下一个人的）。
+  for (const rel of ['README.md', 'CONTRIBUTING.md', 'LICENSE', '.gitattributes',
+    'docs/安装.md', 'docs/工具一览.md', 'docs/省词元与稳定性.md', 'agent.config.example.json']) {
     const q = path.join(dir, rel);
     fs.mkdirSync(path.dirname(q), { recursive: true });
     fs.writeFileSync(q, '夹具：对外文档\n');
@@ -214,8 +218,21 @@ try {
   fs.symlinkSync(path.join(otherTree, 'tools'), path.join(fxShift, 'tools'), 'junction');   // → **另一棵树**
   const outS = path.join(BASE, 'outS');
   const rShift = run(path.join(fxShift, 'tools', 'export-a-new.mjs'), ['--out', outS]);   // ★ 不给 --dry-run
-  check('⑫ ★ realpath 位移：按**文档形式**（junction 路由、不带 flag）跑 ⇒ 必须 fail-loud',
-    rShift.code !== 0, `退出码 ${rShift.code}`);
+  // ★★ 2026-09-26 23:5x（第九代派单 ③3①）：**收紧码断言 ＋ 补判别式**。旧版只写 `code !== 0`
+  //   （任何非零都算过 ⇒ 判据钝）。收紧成 `=== 2` **仍然不够** —— `exit 2` 是**多个出口共用的码**
+  //   （未知参数 / ROOT 位移 / `--out` 护栏 / 链接解析）⇒ 必须再证明"这个 2 是**位移**那个 2"：
+  //   命中位移文案，且**没有**混入另两个出口的签名（用法头 `用法：node` / `--out 被拒`）。
+  const shiftSig = /ROOT 被 realpath 挪走/.test(rShift.text) && /没被检查/.test(rShift.text);
+  const other2 = /用法：node/.test(rShift.text) || /--out 被拒/.test(rShift.text);
+  check('⑫ ★ realpath 位移 ⇒ exit **=== 2**（旧版只断言 != 0）＋ 判别式：确实是"位移"那个 2、不是别的出口',
+    rShift.code === 2 && shiftSig && !other2,
+    `退出码 ${rShift.code}｜位移文案 ${shiftSig}｜混入其它 2 出口 ${other2}`);
+  // ★★ ③3②：旧版**没断言"两个根都印出来"** ⇒ 现在钉住（用户要能一眼看出"我敲的那棵树"与"真正被检查的那棵树"）。
+  //   大小写不敏感比对：Windows 的 `realpathSync` 会返回规范大小写，跟 `mkRepo` 拼出来的字符串可能不同。
+  const lc = (t, p) => t.toLowerCase().includes(p.toLowerCase());
+  check('⑫ 且消息里**两个根都印出来**（你敲的路径 ⇒ 根 A；实际加载的模块 ⇒ 根 B）',
+    lc(rShift.text, fxShift) && lc(rShift.text, otherTree),
+    `含"你敲的根" ${lc(rShift.text, fxShift)}｜含"真正检查的根" ${lc(rShift.text, otherTree)}`);
   check('⑫ 且说清"**ROOT 被 realpath 挪走了 ⇒ 你点名的那棵树没被检查**"',
     /ROOT 被 realpath 挪走/.test(rShift.text) && /没被检查/.test(rShift.text),
     (rShift.text.match(/❌ \*\*ROOT[^\n]*/) || ['(没印)'])[0]);
@@ -246,7 +263,11 @@ fs.rmSync(BASE, { recursive: true, force: true });
 //     记账入口留着，是为了让人**有地方**记，而不是顺手写 `check(name, true)` 把它变得完全隐形。
 //   ★ 下限数字**只写一处**；来源 = 本批实测项数。★★ **改它 = 改判据**：走"守门人改动"纪律
 //     （先自首 ＋ 给 `DSH_SELFTEST_FLOOR=<旧值>` 与默认值的**新旧对照**读数）。
-const SELFTEST_FLOOR = Math.max(35, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
+//   ★ 2026-09-26 23:5x（第九代派单 ③3）**自首**：35 ⇒ **36**。改的是哪条判据：⑫ realpath 位移
+//     的码断言由 `!== 0` 收紧成 `=== 2`（＋判别式），并**新增**「两个根都印出来」那一条夹具。
+//     为什么要抬：新增 1 条 ⇒ 实跑 35 → 36。两侧读数：`DSH_SELFTEST_FLOOR=35`（旧值档）⇒ 36 通过 / 0 失败（绿，
+//     证明变的是下限不是断言）；默认档 ⇒ 36/36（下限 36）；`DSH_SELFTEST_FLOOR=999` ⇒ **红**（下限闸当场点名）。
+const SELFTEST_FLOOR = Math.max(36, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
 const ran = pass + fails.length;
 if (ran < SELFTEST_FLOOR) fails.push(`项数下限闸：本轮只跑了 ${ran} 项 < 下限 ${SELFTEST_FLOOR}（有判据被静默跳过 ⇒ 不许报绿）`);
 console.log(fails.length

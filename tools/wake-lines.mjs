@@ -60,7 +60,12 @@ export function parseLedger(md) {
     if (/^##\s/.test(lines[i])) break;                 // 下一节开始
     if (!lines[i].startsWith('|')) continue;           // 只认表格行
     const cells = lines[i].split('|').map((c) => c.trim());
-    if (cells.length < 4) continue;
+    // ★★ 2026-09-27（协调线第九代派单 · 顺手②）**别依赖收尾那一格**：markdown 表格的**收尾 `|` 是可选语法**
+    //   ⇒ 行尾少一个 `|` 时 `split('|')` 只给 3 格，而旧式 `cells.length < 4 ⇒ continue` 会把**整行丢掉**。
+    //   实测后果（2026-09-26 夜）：台账四行只认出 **1** 条 ⇒ `start-all.ps1` 按台账叫线时**另三条不会被拉起**
+    //   —— 正是全局 ⑯ 号规则要防的"投给旧 id / 静默失效"的机器版。⇒ 只要求"角色格 ＋ id 格"在场。
+    //   ⚠ 副作用（也是这次顺手修的目的）：两侧写法（带/不带收尾 `|`）现在**都能认出**，不再看排版脸色。
+    if (cells.length < 3) continue;
     const role = cells[1] ?? '';
     const idCell = cells[2] ?? '';
     if (/^-+$/.test(role.replace(/[\s:-]/g, '')) || /^线 \/ 角色/.test(role)) continue;   // 表头 / 分隔行

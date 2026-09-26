@@ -1,0 +1,15 @@
+# 行尾**写死** —— 别让"谁 clone 拿到什么行尾"取决于对方机器的 core.autocrlf
+#
+# 为什么必须有（实测依据，2026-09-26）：
+#   `git ls-files --eol` 显示 `qq-bridge/start.bat` 与 `qq-bridge/restart.bat` 的 blob 是 **LF**
+#   （`i/lf w/lf`），而 8 个 `.cmd` 是 CRLF ⇒ **`core.autocrlf=false` 的人 clone 下来会拿到 LF 的批处理**，
+#   Windows 对批处理的行尾是敏感的。⇒ 把口径写进**文件**，与个人 git 配置解耦：谁 clone 都一样。
+#
+# 口径：
+#   · `.cmd` / `.bat`（Windows 批处理）⇒ 工作区**必须 CRLF**
+#   · 其余文本 ⇒ 一律 **LF**（仓库里也存 LF）
+#
+# ⚠ 二进制文件不用在这里列：`text=auto` 对含 NUL 字节的文件会自动按二进制处理（不转换）。
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
