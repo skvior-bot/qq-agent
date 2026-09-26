@@ -1,0 +1,679 @@
+{
+  "_README": "控制面**动作目录** —— 全项目唯一一处定义「有哪些动作 / 参数枚举 / 要不要 {confirm:true} / 各平台怎么执行」。",
+  "_why": "动作白名单原来是**两处定义**：tools\\control-server.mjs 里的 const VERBS + tools\\control.ps1 里的 ValidateSet 与 switch 分支（正是本项目一直在消灭的『同一个值两处定义』）。收到这里之后：**判定**仍只有 tools\\ops.mjs 一处，**动作目录**只有本文件一处，**载波**是 node（跨平台），**页面**是浏览器（跨平台）—— 平台相关的只剩『谁来执行』，那一层叫 tools\\control-driver.mjs。",
+  "_consumers": [
+    "tools\\control-actions.mjs —— 读取器 + 校验器 + 纯函数断言（self-check 5.14 直接 import 它）",
+    "tools\\control-driver.mjs —— 平台驱动缝合层：按 process.platform 选驱动（win32 = 调 tools\\control.ps1；其它平台当场抛人话错误）",
+    "tools\\control-server.mjs —— HTTP 载波（动作白名单与子参数枚举全部来自本文件，自己没有第二份）",
+    "tools\\control.ps1 —— 动作清单 / 参数枚举 / -Tail 上下限 / 哪些动作支持 -Json，全部读本文件"
+  ],
+  "_rules": [
+    "本文件是**数据**，不是代码：不写 if/else。分支（『桥接在跑走重启接口、不在跑走 ensure-bridge』那种）仍在 tools\\control.ps1 里。",
+    "platform.<平台> = null **就是『这个平台还没实现』**（原因看 platforms.<平台>.reason，一个字都不许含糊）—— 谁调谁当场报错，**绝不许假装能用**。",
+    "platform.win32.args 是**外观（facade）调用形状**：拼给 tools\\control.ps1 的 argv。真正干活的脚本在 platform.win32.steps 里（写 Linux 驱动时照 steps 挑对应的 compose/systemctl 动作就够）。",
+    "args 里的 {target} / {tail} 是占位符，**只许由 tools\\control-driver.mjs 替换**：服务端没有任何『用户输入直接进命令行』的路。",
+    "http.confirm 只管**HTTP 面**要不要 {confirm:true}（CLI 那半用 -Yes / Read-Host 二次确认），所以它是 http 的子字段，不是全局字段。",
+    "http.tailClamp 是**载波自己收得更紧**的夹取区间（比 CLI 的 params.tail.min/max 紧），两者故意不同、都写在这里免得变成两处定义。",
+    "usageRow 是『用法清单排在第几行』的**排版信息**（cmd 面板那两行），别当成语义用。",
+    "改动作/参数枚举只改本文件；tools\\self-check.mjs 5.14 会静态拦截两个消费方里的『第二份动作清单』。",
+    "platform.linux 的形状（2026-09-24 落地时定的）：`{ driver, applicable, steps[], stepsNote?, note, shape?, guard? }`；每条 step = `{ label, runner, args? / script? / lines?, when?, note? }`。runner 枚举 = systemctl / docker / journalctl / node / print（print = **只打印、不执行**，用于无桌面服务器上那些『该给人看的地址』）。`when: [<target 白名单值>]` 说明这一步属于哪个子动作。占位符只许是 {target} / {tail}（动作自己的参数）、{port:<配置层端口名>}、{unit:<上面 units 的键>}、{compose} / {envfile} —— **端口与单元名都只有一处定义**，这里一个数字、一个 `.service` 名都不许写死。`applicable:false` = 这个动作在这个平台上**整段不适用**（必须写 notApplicableReason + 空 steps + stepsNote），它跟 null（未实现）是两件事，别混。"
+  ],
+  "version": 1,
+  "platforms": {
+    "win32": {
+      "supported": true,
+      "driver": "control-ps1",
+      "note": "现有实现：外观 = tools\\control.ps1（唯一动作源），执行体 = tools\\start-all.ps1 / stop-all.ps1 / ensure-bridge.ps1 / panels.ps1 / snowluma-login.ps1 / ops.mjs 这些现成脚本（本目录的 steps 逐条写明）。"
+    },
+    "linux": {
+      "supported": true,
+      "driver": "control-linux",
+      "compose": "deploy/linux/docker-compose.yml",
+      "envFile": "deploy/linux/.env",
+      "envExample": "deploy/linux/.env.example",
+      "installScript": "deploy/linux/install.sh",
+      "units": {
+        "dsh": { "name": "dsh-web.service", "file": "deploy/linux/systemd/dsh-web.service" },
+        "control": { "name": "dsh-control.service", "file": "deploy/linux/systemd/dsh-control.service" },
+        "bridge": { "name": "qq-bridge.service", "file": "deploy/linux/systemd/qq-bridge.service" }
+      },
+      "note": "2026-09-24 落地：SnowLuma 走官方 Docker 路线（镜像内含 Linux QQ + Xvfb + noVNC），DSH / 桥接 / 控制面走 systemd 单元（deploy\\linux\\systemd\\，装了 unit 才有东西可驱动）。执行体 = tools\\control-driver.mjs 里的 linux 驱动：它按本目录每个动作的 platform.linux.steps 拼命令（systemctl / docker compose / journalctl / node），**预检不过就以退出码 3 拒绝**（缺 systemctl / systemd 不是 PID 1 / 缺 docker 或 compose 插件 / 缺单元文件都会点名说清）。★ 没有真服务器也能核：`node tools\\control-driver.mjs --print --platform linux` 只打印命令、不执行。逐动作映射与只能等真机验的清单见 docs\\部署到服务器.md §10.11。"
+    },
+    "darwin": {
+      "supported": false,
+      "driver": null,
+      "reason": "未实现：macOS 驱动待写 —— 与 Linux 同类（SnowLuma 官方只支持 Windows 与 Linux，macOS 不在正式支持列表里），见 docs\\部署到服务器.md §10.5"
+    }
+  },
+  "actions": [
+    {
+      "id": "status",
+      "label": "看状态（五灯）",
+      "summary": "只读：五灯（DSH / 桥接 / SnowLuma / QQ / 令牌）+ 一行「下一动作」。判定唯一来源是 node tools\\ops.mjs status --json，本动作只搬运。",
+      "mutates": false,
+      "supportsJson": true,
+      "usage": "status",
+      "usageRow": 1,
+      "http": { "get": true, "post": false, "confirm": { "mode": "never" } },
+      "params": [],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["status"],
+          "steps": [
+            {
+              "label": "唯一判定来源",
+              "runner": "node",
+              "script": "tools\\ops.mjs",
+              "args": ["status", "--json"],
+              "note": "端口判活 / 五灯 / 令牌比对 / 全部在它里面算；control.ps1 只把结果整理成 §3.1 契约的 JSON（面板解析的就是它）。"
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "shape": "status-contract",
+          "steps": [
+            {
+              "label": "唯一判定来源（与 win32 同一条）",
+              "runner": "node",
+              "script": "tools\\ops.mjs",
+              "args": ["status", "--json"],
+              "note": "端口判活 / 五灯 / 令牌比对 / QQ 在线全在它里面算；驱动只搬运。"
+            }
+          ],
+          "note": "只读。★ Linux 上没有 control.ps1 这层外观 ⇒ §3.1 契约（lights / lightList / nextAction / diagnosticCode / lastEvent / onboarded）由 tools\\control-driver.mjs 用 node 拼（shape: status-contract）。这是全项目唯一一处跨语言重复，靠 `node tools\\control-driver.mjs --contract-check`（win32 上）把两份钉在一起 —— 见 §10.11。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "up",
+      "label": "启动三件套",
+      "summary": "确保 DSH / SnowLuma / qq-bridge 都在跑。幂等：五灯全绿就什么都不做（免得白掐断主人正在用的会话）。",
+      "mutates": true,
+      "supportsJson": false,
+      "usage": "up",
+      "usageRow": 1,
+      "http": { "get": false, "post": true, "confirm": { "mode": "never" } },
+      "params": [],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["up"],
+          "steps": [
+            {
+              "label": "全量启动（先清场，再干净起三件套）",
+              "runner": "ps1",
+              "script": "tools\\start-all.ps1",
+              "args": [],
+              "note": "只在『五灯没全绿』或显式 -Force 时才真跑；全绿时 up 一个子进程都不拉。"
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "guard": "all-green",
+          "steps": [
+            {
+              "label": "起 QQ 网关容器（SnowLuma，幂等）",
+              "runner": "docker",
+              "args": ["up", "-d"],
+              "note": "官方 Docker 路线：镜像里带 Linux QQ + Xvfb + noVNC。已经在跑时这条什么都不改。"
+            },
+            {
+              "label": "起 DSH Web",
+              "runner": "systemctl",
+              "args": ["start", "{unit:dsh}"]
+            },
+            {
+              "label": "起控制面（页面总控面板的载波）",
+              "runner": "systemctl",
+              "args": ["start", "{unit:control}"],
+              "note": "它跟三件套没有父子/守护关系：起不来只是面板变灰，QQ 链路照跑。"
+            },
+            {
+              "label": "起桥接（放最后：它要读 DSH 的 guard 日志拿启动令牌）",
+              "runner": "systemctl",
+              "args": ["start", "{unit:bridge}"]
+            }
+          ],
+          "note": "guard=all-green：五灯全绿时**一条命令都不跑**（与 win32 的 up 同一口径 —— 免得白掐断主人正在用的会话）。顺序 = 先 QQ 网关、再 DSH、再控制面、最后桥接。三个 `systemctl start` 本身就是幂等的，容器那条也是。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "down",
+      "label": "关闭全部",
+      "summary": "停掉 DSH Web + SnowLuma + qq-bridge（QQ 机器人下线、正在用的会话会断）。CLI 会问一句，HTTP 面要 {confirm:true}。",
+      "mutates": true,
+      "supportsJson": false,
+      "usage": "down",
+      "usageRow": 1,
+      "http": { "get": false, "post": true, "confirm": { "mode": "always" } },
+      "params": [],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["down", "-Yes"],
+          "steps": [
+            {
+              "label": "停全部（含控制面自己那个 3101）",
+              "runner": "ps1",
+              "script": "tools\\stop-all.ps1",
+              "args": [],
+              "note": "args 里带 -Yes：二次确认已经在**载波那层**（{confirm:true}）做过了，到这一层不许再问 —— 否则非交互调用会卡在 Read-Host 上。"
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "steps": [
+            {
+              "label": "停桥接",
+              "runner": "systemctl",
+              "args": ["stop", "{unit:bridge}"]
+            },
+            {
+              "label": "停控制面",
+              "runner": "systemctl",
+              "args": ["stop", "{unit:control}"]
+            },
+            {
+              "label": "停 DSH Web",
+              "runner": "systemctl",
+              "args": ["stop", "{unit:dsh}"],
+              "note": "SIGTERM 停（systemd 默认就是它），**绝不 SIGKILL**：DSH 被强杀会在 DSH_HOME 留下 .credentials.yaml.lock，下次起来要等约 30 秒然后插件树加载失败（§10.11 实测过）。单元里也写了 KillSignal=SIGTERM。"
+            },
+            {
+              "label": "停 QQ 网关容器（保留容器）",
+              "runner": "docker",
+              "args": ["stop"],
+              "note": "用 stop 不用 down：down 会把容器删掉（三个卷还在，但下次要重建）。QQ 下线、登录态留在卷里。"
+            }
+          ],
+          "note": "顺序与 up 相反。二次确认仍然在载波那层（{confirm:true}）—— Linux 侧照样不问第二遍（非交互调用会被 Read-Host 卡死，与 win32 同一个理由）。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "restart",
+      "label": "重起（可只重起一件）",
+      "summary": "重起 all（三件套全量）/ dsh（只重起 DSH，QQ 那套留着）/ bridge（只重起桥接）/ snowluma（只重起 QQ 网关）。",
+      "mutates": true,
+      "supportsJson": false,
+      "usage": "restart <all|dsh|bridge|snowluma|control>",
+      "usageRow": 1,
+      "http": { "get": false, "post": true, "confirm": { "mode": "targets", "targets": ["dsh", "all"] } },
+      "params": [
+        {
+          "name": "target",
+          "required": true,
+          "values": ["all", "dsh", "bridge", "snowluma", "control"],
+          "note": "all/dsh 会断掉正在用的 DSH 会话 ⇒ HTTP 面要 {confirm:true}；bridge/snowluma/control 不打断 DSH（control = 只重起控制面自己那个独立进程，面板会灰十几秒，QQ 链路不受影响）。"
+        }
+      ],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["restart", "{target}"],
+          "steps": [
+            {
+              "when": "target=all",
+              "label": "先清场再起三件套",
+              "runner": "ps1",
+              "script": "tools\\start-all.ps1",
+              "args": []
+            },
+            {
+              "when": "target=dsh",
+              "label": "只重起 DSH（-NoClean：SnowLuma 与桥接不动）",
+              "runner": "ps1",
+              "script": "tools\\start-all.ps1",
+              "args": ["-NoClean"]
+            },
+            {
+              "when": "target=bridge 且控制台在跑",
+              "label": "走桥接自己的重启接口（守护会把它拉回来）",
+              "runner": "node",
+              "script": "tools\\ops.mjs",
+              "args": ["restart-bridge"]
+            },
+            {
+              "when": "target=bridge 且控制台不在跑",
+              "label": "同步 DSH 令牌再照启动器的方式拉起来",
+              "runner": "ps1",
+              "script": "tools\\ensure-bridge.ps1",
+              "args": []
+            },
+            {
+              "when": "target=snowluma（第一步）",
+              "label": "只停 QQ 网关（复用 stop-all 的端口→进程识别与自保）",
+              "runner": "ps1",
+              "script": "tools\\stop-all.ps1",
+              "args": ["-OnlySnowLuma"]
+            },
+            {
+              "when": "target=snowluma（第二步，停成功才做）",
+              "label": "只把它起回来（不动 DSH 与桥接）",
+              "runner": "ps1",
+              "script": "tools\\start-all.ps1",
+              "args": ["-NoRestart"],
+              "note": "SnowLuma 的 WebUI 令牌只在内存里：重起后管理页那个标签要重新登录。"
+            },
+            {
+              "when": "target=control（第一步）",
+              "label": "只停控制面自己那个进程（复用 stop-all 的端口→进程识别与自保）",
+              "runner": "ps1",
+              "script": "tools\\stop-all.ps1",
+              "args": ["-OnlyControl"],
+              "note": "控制面是 tools\\control-server.mjs 的**独立进程**（start-all.ps1 起的，stop-all 的清理表里也有它）⇒ 重起桥接**不会**重起它。这就是这个 target 存在的理由：改完控制面代码（比如动作目录）不用再全量重启、把 DSH 会话一起打断。"
+            },
+            {
+              "when": "target=control（第二步，停成功后）",
+              "label": "只把缺的补起来（-NoRestart：在跑的一律不动 ⇒ 这一步只会拉起刚被杀掉的控制面）",
+              "runner": "ps1",
+              "script": "tools\\start-all.ps1",
+              "args": ["-NoRestart", "-NoOpen"],
+              "note": "★ 为什么不是另写一条启动命令：控制面的启动命令在 start-all.ps1 里（cmd /d + node tools\\control-server.mjs，无窗口 + 日志重定向进 state\\_tmp\\control-server.log）。-NoRestart 的语义就是『在跑的一律不动、只补起缺的服务』（start-all.ps1 第 313 行），于是它跑的还是**那同一条**命令 —— 这里没有第二份启动方式。-NoOpen = 别顺手把三个页面又开一遍。"
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "steps": [
+            {
+              "when": ["all"],
+              "label": "重起 QQ 网关容器",
+              "runner": "docker",
+              "args": ["restart", "snowluma"],
+              "note": "WebUI 登录令牌只在容器内存里 ⇒ 重起后管理页那个标签要重新登录（与 win32 restart snowluma 同一个后果）。"
+            },
+            {
+              "when": ["all"],
+              "label": "重起三个 unit（DSH / 控制面 / 桥接）",
+              "runner": "systemctl",
+              "args": ["restart", "{unit:dsh}", "{unit:control}", "{unit:bridge}"]
+            },
+            {
+              "when": ["dsh"],
+              "label": "只重起 DSH（SnowLuma 与桥接不动）",
+              "runner": "systemctl",
+              "args": ["restart", "{unit:dsh}"]
+            },
+            {
+              "when": ["bridge"],
+              "label": "只重起桥接",
+              "runner": "systemctl",
+              "args": ["restart", "{unit:bridge}"],
+              "note": "Linux 上 systemd 就是守护（Restart=always）⇒ 用不着 win32 那条『走桥接自己的重启接口 / 守护在 start.bat 里』的路。"
+            },
+            {
+              "when": ["snowluma"],
+              "label": "只重起 QQ 网关",
+              "runner": "docker",
+              "args": ["restart", "snowluma"],
+              "note": "重起后管理页那个标签要重新登录（令牌只在容器内存里）。"
+            },
+            {
+              "when": ["control"],
+              "label": "只重起控制面（页面总控面板的载波）",
+              "runner": "systemctl",
+              "args": ["restart", "{unit:control}"],
+              "note": "★ 它与桥接**不是**同一个 unit：重起控制面不该断 QQ 链路（Windows 上它也是被 start-all.ps1 起的独立进程 —— 同一个设计）。这就是『改控制面代码后要重起谁』的答案，见 §10.11。"
+            }
+          ],
+          "note": "all = 容器 + 三个 unit 全量重起（等价于 win32 的『清场再起』，但 Linux 上不杀进程树：全靠 systemd 的 SIGTERM）。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "pages",
+      "label": "开 / 关 / 叫醒页面",
+      "summary": "open / close / wake —— wake 只是把已有窗口叫到前台（不开页、不关窗；浏览器不给外部脚本切标签的 API）。唯一开页面者是 tools\\panels.ps1。",
+      "mutates": true,
+      "supportsJson": false,
+      "usage": "pages <open|close|wake>",
+      "usageRow": 1,
+      "http": { "get": false, "post": true, "confirm": { "mode": "never" } },
+      "params": [
+        {
+          "name": "target",
+          "required": true,
+          "values": ["open", "close", "wake"],
+          "note": "HTTP 面只传这三个词；CLI 还能带 -Pages / -ForcePage / -OwnWindow（页名单的唯一来源在 panels.ps1）。"
+        }
+      ],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["pages", "{target}"],
+          "steps": [
+            {
+              "when": "target=open",
+              "label": "开页面（可带 -Pages / -ForcePage / -OwnWindow，原样透传）",
+              "runner": "ps1",
+              "script": "tools\\panels.ps1",
+              "args": ["open"]
+            },
+            {
+              "when": "target=close",
+              "label": "关掉我们开的那些页面窗口",
+              "runner": "ps1",
+              "script": "tools\\panels.ps1",
+              "args": ["close"]
+            },
+            {
+              "when": "target=wake",
+              "label": "把已有窗口叫到前台（已最小化的先 restore）",
+              "runner": "ps1",
+              "script": "tools\\panels.ps1",
+              "args": ["wake"]
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": false,
+          "notApplicableReason": "无桌面服务器上没有可开 / 可关 / 可叫醒的浏览器窗口：pages 的三个子动作（open / close / wake）全都建立在『本机有桌面窗口』这个前提上，而 Linux VPS 上这个前提**不成立** —— 所以是**整段不适用**，不是『还没实现』（没实现要写 null）。人在自己电脑上看那三个页面的正确做法是 SSH 隧道 + 本地浏览器：地址与命令由 login 动作打印出来，部署说明在 deploy\\linux\\README.md。",
+          "steps": [],
+          "stepsNote": "不适用 ⇒ 没有执行体（**不是漏写**）。驱动收到这个动作会打印上面那段原因并以**退出码 2** 拒绝 —— 绝不假装开成功（假装成功会让面板显示『已打开』，而人在自己电脑上什么也没看见）。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "login",
+      "label": "登录 QQ / 开控制台",
+      "summary": "qq = 换 SnowLuma 令牌并把管理页开出来（扫码登录 QQ 用）；console = 带令牌打开桥接控制台页。",
+      "mutates": true,
+      "supportsJson": false,
+      "usage": "login <qq|console>",
+      "usageRow": 2,
+      "http": { "get": false, "post": true, "confirm": { "mode": "never" } },
+      "params": [
+        {
+          "name": "target",
+          "required": true,
+          "values": ["qq", "console"],
+          "note": "qq 会换令牌（管理页那个标签必须强制重开）；console 的令牌是持久的（已开着就跳过）。"
+        }
+      ],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["login", "{target}"],
+          "steps": [
+            {
+              "when": "target=qq（第一步）",
+              "label": "只换令牌、不开页面",
+              "runner": "ps1",
+              "script": "tools\\snowluma-login.ps1",
+              "args": ["-NoOpen"],
+              "note": "退出码有语义（2=没存过密码 / 3=密码被拒 / 4=连不上 / 5=没返回令牌），文案在 control.ps1 里。"
+            },
+            {
+              "when": "target=qq（第二步）",
+              "label": "把管理页强开出来（-ForcePage：旧标签里的令牌已失效）",
+              "runner": "ps1",
+              "script": "tools\\panels.ps1",
+              "args": ["open", "-Pages", "snowluma", "-ForcePage", "snowluma"]
+            },
+            {
+              "when": "target=console 且桥接不在跑",
+              "label": "先把桥接拉起来（否则控制台页打不开）",
+              "runner": "ps1",
+              "script": "tools\\ensure-bridge.ps1",
+              "args": []
+            },
+            {
+              "when": "target=console（最后一步）",
+              "label": "带令牌开控制台页",
+              "runner": "ps1",
+              "script": "tools\\panels.ps1",
+              "args": ["open", "-Pages", "console"]
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "steps": [
+            {
+              "when": ["qq"],
+              "label": "扫码入口：打印该给人看的地址与命令（**不执行任何东西**）",
+              "runner": "print",
+              "lines": [
+                "[控制面] Linux 上 login qq = 把该给人看的东西打出来（**不会替你开浏览器**：服务器上没有桌面，也没有二维码可画 —— 二维码是 QQ 客户端自己画的）",
+                "  ① 在**你自己的电脑**上开 SSH 隧道（把服务器的回环端口搬到你本机）：",
+                "     ssh -N -L {port:novnc}:127.0.0.1:{port:novnc} -L {port:snowlumaWeb}:127.0.0.1:{port:snowlumaWeb} <user>@<server>",
+                "  ② 隧道开着时，浏览器打开 http://127.0.0.1:{port:novnc}/ —— 容器里的 Linux QQ 就在这个页面里，**扫码就在这扫**",
+                "  ③ VNC / WebUI 的密码在容器启动日志里，取一次：",
+                "     docker compose -f {compose} --env-file {envfile} logs snowluma | grep -iE 'password|vnc'",
+                "  ④ 扫完确认 ptrace 注入真的生效：docker compose -f {compose} --env-file {envfile} logs snowluma | grep -i hook",
+                "  · 这一步**不换任何令牌**：win32 那半的 snowluma-login.ps1 走 DPAPI（Linux 上整条链不存在，见 §10.5）；OneBot 的 accessToken 在容器侧配（{envfile} 里的 SNOWLUMA_ACCESS_TOKEN，两端要逐字相同）"
+              ]
+            },
+            {
+              "when": ["console"],
+              "label": "控制台页：打印地址与取令牌的命令（**不执行任何东西**）",
+              "runner": "print",
+              "lines": [
+                "[控制面] Linux 上 login console = 把地址与取令牌的命令打出来（本机没有浏览器可开）：",
+                "  · SSH 隧道：ssh -N -L {port:bridgeConsole}:127.0.0.1:{port:bridgeConsole} <user>@<server>",
+                "  · 然后在你自己的浏览器里开 http://127.0.0.1:{port:bridgeConsole}/",
+                "  · 页面问令牌时，在服务器上执行：cat qq-bridge/state/console-token（把值粘进页面）"
+              ]
+            }
+          ],
+          "note": "Linux 上它是**打印型动作**（runner=print）：`--print` 打出来的就是真跑时打出来的，一个子进程都不拉。这也回答了『无桌面服务器上 login 怎么办』：不假装开页面，只把该给人看的地址/命令给全。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "logs",
+      "label": "看日志尾",
+      "summary": "只读：日志尾（dsh / bridge / snowluma 三选一，-Tail N 行）。真读的是 node tools\\ops.mjs logs（它自己做行长截断）。",
+      "mutates": false,
+      "supportsJson": true,
+      "usage": "logs <dsh|bridge|snowluma> [-Tail N]",
+      "usageRow": 2,
+      "http": { "get": true, "post": false, "confirm": { "mode": "never" }, "tailClamp": { "min": 1, "max": 200, "default": 20 } },
+      "params": [
+        { "name": "target", "required": true, "values": ["dsh", "bridge", "snowluma"] },
+        {
+          "name": "tail",
+          "required": false,
+          "type": "int",
+          "min": 1,
+          "max": 2000,
+          "default": 40,
+          "note": "CLI 区间 1~2000（越界报用法错误）；HTTP 面自己夹得更紧：见 http.tailClamp（1~200、缺省 20）—— 两者故意不同，都写在本文件里。"
+        }
+      ],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["logs", "{target}", "-Tail", "{tail}"],
+          "steps": [
+            {
+              "label": "读日志尾",
+              "runner": "node",
+              "script": "tools\\ops.mjs",
+              "args": ["logs", "{target}", "{tail}"]
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "shape": "logs-tail",
+          "steps": [
+            {
+              "when": ["dsh"],
+              "label": "DSH Web 的日志（journald）",
+              "runner": "journalctl",
+              "args": ["-u", "{unit:dsh}", "-n", "{tail}", "--no-pager", "-o", "short-iso"]
+            },
+            {
+              "when": ["bridge"],
+              "label": "qq-bridge 的日志（journald）",
+              "runner": "journalctl",
+              "args": ["-u", "{unit:bridge}", "-n", "{tail}", "--no-pager", "-o", "short-iso"],
+              "note": "state\\bridge.log 在 Linux 上也照写（桥接自己的日志文件），两条都能看：journald 那份带 systemd 的启动/退出记录，文件那份是桥接内部的流水。"
+            },
+            {
+              "when": ["snowluma"],
+              "label": "SnowLuma 容器的日志（docker）",
+              "runner": "docker",
+              "args": ["logs", "--tail", "{tail}", "snowluma"],
+              "note": "容器日志**不在仓库里**（这就是 Linux 上 logs 必须换实现的原因：win32 那份读的是 SnowLuma\\logs\\ 目录）。"
+            }
+          ],
+          "note": "Linux 上日志分三处：DSH 与桥接进 journald，SnowLuma 在容器里。★ DSH 那份**同时**还有 <DSH_HOME>/guard/logs/server-*.out.log（桥接就是靠它发现启动令牌的，见 deploy\\linux\\README.md）—— 要按文件看就用那个。-Json 时驱动拼出与 win32 **同字段**的 JSON（action / source / ok / which / tail / text）给面板。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "doctor",
+      "label": "精简自检",
+      "summary": "只读：跑一遍工作区自检（运行时 / 启动链 / preset / 文档 / 结构不变量 / 日志健康），退出码非 0 表示有失败项。",
+      "mutates": false,
+      "supportsJson": false,
+      "usage": "doctor",
+      "usageRow": 2,
+      "http": { "get": false, "post": true, "confirm": { "mode": "never" } },
+      "params": [],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["doctor"],
+          "steps": [
+            {
+              "label": "自检（只读，不改任何状态）",
+              "runner": "node",
+              "script": "tools\\self-check.mjs",
+              "args": []
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "steps": [
+            {
+              "label": "自检（只读，不改任何状态；与 win32 同一条命令）",
+              "runner": "node",
+              "script": "tools\\self-check.mjs",
+              "args": []
+            }
+          ],
+          "note": "⚠ 预期会报出与『启动链』有关的失败项：那几条断言是按 Windows 启动链（start-all.ps1 / 计划任务 / cmd 窗口）写的，Linux 上本来就对不上 —— 这是**已知差异**，不是部署坏了（§10.7 步 13 / §10.10 第 1 条）。要消掉它得给 self-check 加平台分支，**本轮没做**。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "help",
+      "label": "用法",
+      "summary": "打印动作清单与通用开关（= control.ps1 的用法屏），不碰任何状态、不拉任何子进程。",
+      "mutates": false,
+      "supportsJson": false,
+      "usage": null,
+      "usageRow": null,
+      "http": { "get": false, "post": false, "confirm": { "mode": "never" } },
+      "params": [],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["help"],
+          "steps": [],
+          "stepsNote": "没有执行体：用法屏是 control.ps1 自己打印的（所以 steps 是空数组，不是漏写）。它**故意不进用法清单那两行**（usage=null）—— 与今天就一致。"
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "steps": [],
+          "stepsNote": "没有执行体：Linux 上没有 control.ps1 的用法屏，用法由驱动**从动作目录现场渲染**（usage / usageRow / params 都是这份数据自己的字段，别在代码里抄第二份）—— 所以 steps 是空数组，不是漏写。",
+          "note": "与 win32 一致：它故意不进用法清单那两行（usage=null）。"
+        },
+        "darwin": null
+      }
+    },
+    {
+      "id": "restart-stack",
+      "label": "受令全量重启",
+      "summary": "「一条 HTTP 就能让整套停机再全量起来」的入口：控制面把启动器拉成**分离进程**（先清场再起三件套）后立刻回执，所以发起方不会被「重启把自己一起杀掉」卡住。",
+      "mutates": true,
+      "supportsJson": true,
+      "usage": "restart-stack",
+      "usageRow": 2,
+      "http": {
+        "get": false,
+        "post": true,
+        "confirm": { "mode": "always" },
+        "receipt": { "plan": "stop-all → start-all" },
+        "busyGuard": {
+          "marker": "qq-bridge\\state\\restart-stack.json",
+          "maxAgeMs": 300000,
+          "note": "single-flight：控制面**自己也会被这次重启杀掉**（它的 lastAction 记账跟着一起没了），所以「有没有一次重启在飞」只能落在**盘上**。发起方先看这个标记：还在 maxAgeMs 窗口内 ⇒ 409（第二次不放行）；启动器把三件套起齐后删掉它 ⇒ 窗口自然关闭。过期的当没有（判不准时宁可放行一次，也不能让入口永久锁死）。"
+        }
+      },
+      "params": [],
+      "platform": {
+        "win32": {
+          "driver": "control-ps1",
+          "script": "tools\\control.ps1",
+          "args": ["restart-stack"],
+          "steps": [
+            {
+              "label": "控制面把启动器拉成**分离进程**（不 -Wait：它自己马上就要被这次重启杀掉）",
+              "runner": "cmd",
+              "script": "一键启动.cmd",
+              "args": ["1"],
+              "note": "★ 为什么必须分离、而不是在这里同步跑 start-all.ps1：本动作的调用链是 control-server.mjs → control-driver.mjs → control.ps1，而启动器第一步就是 stop-all.ps1 —— **它会把 control-server.mjs 一起关掉**。同步跑等于「发起的那个进程死在半路」：回执永远发不出去，也没人知道重启到底有没有开始。分离进程 + 立刻回执之后，重启由启动器自己跑完（与主人双击 一键启动.cmd 选 1 是同一条路）。"
+            }
+          ]
+        },
+        "linux": {
+          "driver": "control-linux",
+          "applicable": true,
+          "steps": [
+            {
+              "label": "重启 QQ 网关容器",
+              "runner": "docker",
+              "args": ["restart", "snowluma"],
+              "note": "WebUI 登录令牌只在容器内存里 ⇒ 重起后管理页那个标签要重新登录（与 win32 的 restart snowluma 同一后果）。"
+            },
+            {
+              "label": "重启三个 unit（DSH / 控制面 / 桥接）",
+              "runner": "systemctl",
+              "args": ["restart", "{unit:dsh}", "{unit:control}", "{unit:bridge}"],
+              "note": "Linux 上**不需要**「分离进程」那一套：执行者是独立二进制 systemctl、活由 PID 1 干，控制面被重起不会把这次调用带走（win32 那条限制来自进程树，见 win32 的 note）。"
+            }
+          ],
+          "note": "与 restart all 等价，差别只在**语义**：这是「会话 / 脚本自己发起的全套重启」的稳定入口（win32 上多一层分离进程 + 盘上 single-flight 标记）。"
+        },
+        "darwin": null
+      }
+    }
+  ]
+}

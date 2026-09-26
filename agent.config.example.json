@@ -1,0 +1,37 @@
+{
+  "_note_1": "这是**交付模板**：复制成 agent.config.json 再改（agent.config.json 已被 .gitignore 排除，绝不进版本库）。命令：copy agent.config.example.json agent.config.json",
+  "_note_2": "环境层（参数单一来源）。判据一句话：同一个人在另一台机器上会填不一样的值。读取器**只有一处**：qq-bridge\\src\\config-lib.js 的 loadEnvConfig()（默认值表也在那儿，这里没有第二份）。",
+  "_note_3": "不复制也能跑：这一层整个缺席时取值 = qq-bridge\\config.json > config-lib.js 的默认表，与'没有这一层'逐字等价（回归网 qq-bridge\\scripts\\test-env-config.mjs 钉着）。本模板里所有值都是 null/空 = 未设置，所以**照抄不改也不会坏**。",
+  "_note_4": "★ 身份（ownerQQ / botQQ / displayName）：这三个值换个人就完全不同，**一个都不许硬编码在代码里** —— 硬编码的昵称会让引导语指向别人的机器人，硬编码的号会把主人的 QQ 发出去。",
+
+  "_note_ownerQQ": "主人 QQ（唯一管理员，正整数；null = 未设置）。**这一项故意没有默认值**：不填就只能靠 qq-bridge\\config.json；两边都没有时启动会打一行 ✖ 并说清去哪儿填，同时管理命令 / 审批转达 / 入群审批全部不可用（fail-closed，不是静默）。填法：\"ownerQQ\": 10001",
+  "ownerQQ": null,
+
+  "_note_botQQ": "机器人 QQ（正整数；null = 未设置 = **自动取**）。自动来源：SnowLuma 的 onebot_<UIN>.json 文件名（会排除 ownerQQ —— 主人自己的号也常有一份，别注错人）。想锁死就填：\"botQQ\": 20002",
+  "botQQ": null,
+
+  "_note_displayName": "机器人显示名（人设昵称；\"\" = 未设置 = **自动取**）。自动来源：网关登录昵称（QQ 在线时自动拿到）。它只用在引导语「在 QQ 里跟「X」说话就行」这类地方。想固定就填：\"displayName\": \"小鲸鱼\"",
+  "displayName": "",
+
+  "_note_ports": "端口：改一处全仓库都跟着变（tools\\ 与 qq-bridge\\scripts\\ 的脚本全部从这一层派生）。整段删掉 = 用 config-lib.js 的内置默认表（就是下面这几个数）。",
+  "ports": {
+    "dshWeb": 3080,
+    "onebotHttp": 3000,
+    "snowlumaWs": 3001,
+    "snowlumaWeb": 5099,
+    "bridgeConsole": 3100,
+    "bridgeControl": 3101
+  },
+
+  "_note_paths": "路径（可选，整段删掉即可）：snowlumaHome / snowlumaLauncher 填 SnowLuma 目录与 launcher.bat 的绝对路径（例如 D:\\\\hobby\\\\DSH\\\\SnowLuma）；sessionCwd 填每个会话的工作目录，\"\" = 每个会话各建一个。",
+  "_note_paths_2": "⚠ 上面没写 paths：留空 = 沿用 qq-bridge\\config.json 里已有的值（那才是本机的真值）。要在这里覆盖时**必须写绝对路径**，写成 <占位> 会当场抛。",
+
+  "_note_allow": "allow / deny（白名单）也认，但**故意不写在这里**：控制台运行时会往 qq-bridge\\config.json 回写白名单，这里再放一份过期副本会把控制台的改动静默压掉。要锁死再写。",
+
+  "_note_browserMode": "browserMode：lazy（省心，默认）/ dev（开进你自己的浏览器）/ idle（挂机，不开页）。",
+  "browserMode": "lazy",
+  "_note_headless": "headless：true = 完全不开浏览器页面。",
+  "headless": false,
+
+  "_note_end": "字段名写错 / 端口越界 / 坏 JSON 一律**当场抛**（静默忽略的表现就是'改了没生效'）。本文件一律不带 BOM。"
+}

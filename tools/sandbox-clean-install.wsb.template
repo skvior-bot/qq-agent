@@ -1,0 +1,22 @@
+<Configuration>
+  <!-- Windows 沙盒 配置模板 —— 由 tools\sandbox-clean-install.ps1 填充后写到临时目录再用。
+       占位符就这五个，改格式会解析不了：
+         {{HOST_FOLDER}}     宿主机上"被打包产物所在的临时目录"（**只映射它，绝不映射仓库**）
+         {{SANDBOX_FOLDER}}  沙盒里挂到哪儿（固定 C:\dsh-sandbox）
+         {{NETWORKING}}      Enable / Disable
+         {{LOGON_COMMAND}}   登录后自动跑的收尾命令（跑点火脚本 → 它自己 shutdown）
+         {{MEMORY}}          留空（用沙盒默认 4096 MB）或 <MemoryInMB>N</MemoryInMB>
+       ReadOnly=false 是为了让沙盒把转录/结果写回宿主机那侧。
+       ⚠ 元素顺序有讲究（.wsb 的 schema 是序列）：MemoryInMB 必须在**最后**，别插到中间去。 -->
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>{{HOST_FOLDER}}</HostFolder>
+      <SandboxFolder>{{SANDBOX_FOLDER}}</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <Networking>{{NETWORKING}}</Networking>
+  <LogonCommand>
+    <Command>{{LOGON_COMMAND}}</Command>
+  </LogonCommand>{{MEMORY}}
+</Configuration>
