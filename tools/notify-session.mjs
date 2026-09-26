@@ -246,8 +246,18 @@ if (has('--dry-run')) {
 // steer 落在对方**下一个 step 边界**（会话正在跑长回合时不用等它跑完、也不用主人去点"接收"），
 // 且 **不 abort 任何东西**（不会打断它正在写的文件 / 正在跑的 pwsh）。不被接受时回落 queue ——
 // 与桥接 deliverPrompt（qq-bridge\src\bridge.js:9111-9137）同一套写法与纪律。
+//
+// ★★ 2026-09-27 实测踩坑（协调线，真事故）：**给一个「从未起过轮」的全新会话投 steer，会被 API 接受、然后静默丢掉。**
+//   实测对象 = 第十代优化线 `session-1499c754`：steer 投两次都 `accepted:true`，但目标投影 `inbox` 仍空、
+//   所有行 `seq` 停在 3、`sessionStats.steps` 仍 0、`sessionListMetadata.blank` 一直 true ⇒ 正文**根本没进去**；
+//   又因为 `blank`，**GUI 列表里连它都不显示**（主人看到的表象是"新开的线不见了"）。
+//   同一份正文改投 `--queue` 后：25 秒内 `7 步 / 1 轮 / 跑着`、`blank=false`、`inbox` 被消费（`seq` 3 → 49）✓
+//   ⇒ **全新 / 从未起过轮的会话，投递必须显式 `--queue`**（消息落 `inbox.next-turn`，由 DSH 起轮）。
+//   ⚠ 别把结论放大：**有历史但空闲**的会话用 steer 是正常的（同日 01:35 给第九代投微批 7 实测起轮 ✓）；
+//     **卡死**的会话（复投也不动、缓存 mtime 冻住）是另一回事 —— 按换代处理，别在这儿耗。
+//   ⇒ 判据（投完必须核）：目标的 `steps` 或某行 `seq` 应当变化、`inbox` 应当被消费。
 const payload = [{ type: 'text', text }];
-let mode = 'steer';
+let mode = has('--queue') ? 'queue' : 'steer';
 let accepted;
 try {
   accepted = unwrap(await api.sessions.prompt({ sessionId: to.id, mode, content: payload }), 'session/prompt');
