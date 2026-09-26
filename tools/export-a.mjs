@@ -39,6 +39,10 @@
 //      一律拒 ⇒ 退出码 2，**一个东西都不删**（拒绝发生在任何删除之前）。
 //      为什么必须有：落盘那一步会先清理目标目录，而 `--out docs` / `--out .` 会**先删真源码树**。
 //   ⑥ **原子落盘**：先写**同卷暂存目录**（`.<名字>.building-<pid>`）⇒ 逐份取证 ⇒ **过了才整体换名**
+//      ★ 2026-09-27 微批 3 两件：① 换名被拒（EPERM/EACCES/EBUSY）⇒ **降级**：删旧目录再落盘；
+//        降级也失败 ⇒ **非零退出 ＋ 印清"旧成品还在不在 / 新成品在哪"**（立案现场：本机 rename 稳定被拒，而删除能成）。
+//        ② **读数口径自曝**：候选守恒／L1／L1exact／L2／份数**全部算在暂存目录上**，判读口收到**末行【落盘】**
+//        （换盘失败时那些"绿"读数**照旧会打出来** —— 实测踩过，主人差点据此把旧成品当新的 push）。
 //      （旧成品先改名成 `<名字>.old-<pid>`，换名成功后再删）。⇒ 中途失败或被拒时**旧成品原样保留**；
 //      旧写法是"先删了再写"，一撞 `EPERM` 就只剩半棵树、却看起来像成品。
 //   ★ L1 判定口径（复核线打回 (a)(b) 后收紧 —— 判定侧与替换侧必须同一口径，否则两边都能漏）：
@@ -93,6 +97,11 @@
 //     出现链接 ⇒ **exit 4 且一个东西都不写**；确认无误后用 `--allow-links` 显式放行
 //     （那时才继续，并打印"已按显式放行处理 N 个链接（**仍不跟进**）"）。
 //   ★ **判据⑨ 未知参数**：不在参数面里的一律 ⇒ 打印用法 ＋ exit 2，且**跑在任何动作之前**（见文件头）。
+//   ★★ **判据⑩ 包内引用必须落地**（2026-09-27 微批 7 立）：包里的 `.md` 一旦引用 `docs\X.md`，**X 就必须在包里**；
+//      找不到 ⇒ **拒交付 exit 4、逐个点名**（`--dry-run` 也跑）。立案现场：`eb0d893` 那份 A 档**带着 5 处悬空引用
+//      照样发了出去**（CONTRIBUTING 四行 ＋ 工具一览一行）—— 拿到包的人按表去读会扑空，而
+//      **任何"扫密钥 / 扫形状"的闸都看不见它**（它扫的是"有没有真值"，不是"引用的东西在不在"）。
+//      ★ 豁免只有一处：代码里的 `ALLOW_ABSENT_REFS`（每条**必须带理由**，且只收"运行后生成 / 永远不在包里"的）。
 //   ⚠ 残余（**只记不修**，2026-09-26 22:xx）：① 名叫 `state` 的**硬链接文件** —— 跳过名单在硬链接检查
 //     **之前** `continue` ⇒ 它看不见，但**也不会进包**（跳过的条目压根不入候选）⇒ **不漏**，低危；
 //     ② `qq-bridge\state\_tmp\export-a-scan.json` **从不清理** ⇒ ★ **已修**（2026-09-26 23:5x 第九代派单 ③6②）：
@@ -218,6 +227,8 @@ const DOCS = [
   ['docs/安装.md', '★ **对外安装文档**（面向使用者；2026-09-26 协调线第九代派单 ① —— 从内部 4 份改写、去掉令牌链/端口/台账/花费）'],
   ['docs/工具一览.md', '★ **对外工具一览**（面向使用者；同上。⚠ 只列脚本与"什么时候用"，不抄易过期说明）'],
   ['docs/省词元与稳定性.md', '★ **对外策略文档**（为什么做这个 ＋ 省钱口径 ＋ 稳定性踩坑；2026-09-27 协调线批次 C，主人已批"只要不涉及我的账号信息"；该批微调改名以避开硬禁字样）'],
+  ['docs/仓库导览.md', '★ **对外仓库导览**（逐路径"是什么 / 何时才进"；2026-09-27 微批 7 —— 从内部 `目录地图.md` 提炼，剔掉内部真值、按"拿到包的人真看到的树"重写）'],
+  ['docs/服务器部署.md', '★ **对外部署文档**（搬到常开机器：选机器 / 迁移 / 常开自愈 / 远程访问 / 备份 / 升级 / checklist；同期从内部 `部署到服务器.md` 提炼，**IP 与密钥路径一律不写**）'],
   ['agent.config.example.json', '环境层模板（纯占位）'],
 ];
 const EXCLUDE_A = [
@@ -603,6 +614,24 @@ function runSelftest() {
     isRenameDenied('EPERM') === true && isRenameDenied('EACCES') === true && isRenameDenied('EBUSY') === true
     && isRenameDenied('ENOENT') === false && isRenameDenied('EXDEV') === false && isRenameDenied(undefined) === false,
     `EPERM/EACCES/EBUSY ⇒ ${['EPERM', 'EACCES', 'EBUSY'].map((c) => isRenameDenied(c)).join('/')} · ENOENT/EXDEV/无码 ⇒ ${['ENOENT', 'EXDEV', undefined].map((c) => String(isRenameDenied(c))).join('/')}`);
+  // ★ ⑭ 判据⑩ 的**纯函数**部分（2026-09-27 微批 7）：悬空引用必须点名、豁免要真生效、包内引用放行。
+  //   立案现场：`eb0d893` 那份 A 档带 5 处悬空引用照样发出去（扫密钥/扫形状的闸都看不见它）。
+  //   ★ 断言**两边都有**：① 悬空 ⇒ 点名 ② 豁免里的 ⇒ 不报，而**把豁免去掉 ⇒ 必须多报一条**（证明豁免不是恒定吞掉）
+  //     ③ 包内存在的引用 ⇒ 不报。⇒ 判据被写成"恒真"或"恒假"都过不了。
+  {
+    const files = [
+      { rel: 'A.md', text: '见 `docs\\在.md` 与 [链接](docs/也在.md)' },
+      { rel: 'docs/在.md', text: '本体' },
+      { rel: 'docs/也在.md', text: '本体' },
+      { rel: 'B.md', text: '见 `docs\\不在.md` 与 `docs\\生成.md`' },
+    ];
+    const withAllow = danglingRefs(files, { allowAbsent: ['生成.md'] });
+    const noAllow = danglingRefs(files, { allowAbsent: [] });
+    ck('⑭ ★ 判据⑩ 包内引用落地：悬空点名 ＋ 豁免真生效 ＋ 包内引用放行（豁免去掉 ⇒ 必须多报一条）',
+      withAllow.length === 1 && withAllow[0].file === 'B.md' && withAllow[0].ref === 'docs/不在.md'
+      && noAllow.length === 2 && noAllow.some((b) => b.ref === 'docs/生成.md'),
+      `带豁免 ⇒ ${JSON.stringify(withAllow)} · 不带豁免 ⇒ ${JSON.stringify(noAllow)}`);
+  }
   // ★ 项数下限闸（2026-09-26 21:5x 立；★ 22:xx 按复核线 r3 §3 **改口径**）：治"**静默跳过一条判据**"这一整类。
   //   ★★ 口径（六条发现里的第①⑤条）：**比 `ran`（本轮实际跑了几条），不比 `pass`（过了几条）** ——
   //      比 `pass` 时**真失败**（例如 76 通过/4 失败）也会触发它，并给出**错误诊断**"有判据被静默跳过"
@@ -614,9 +643,11 @@ function runSelftest() {
   //   ★ 下限数字**只写一处**（就这一行）；**来源** = 本批 `--selftest` 的实测项数。
   //     ★★ **改这一行 = 改判据**：动它必须走"守门人改动"纪律 —— **先自首 ＋ 给新旧对照读数**
   //     （`DSH_SELFTEST_FLOOR=<旧值>` 与默认值各跑一次，把两次的输出贴在一起）。别默默往下调。
-  const SELFTEST_FLOOR = Math.max(20, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
+  const SELFTEST_FLOOR = Math.max(21, Number(process.env.DSH_SELFTEST_FLOOR) || 0);
   //   ★ 2026-09-27 微批 3 自首：19 → **20**（新增 ⑬ 一条）⇒ 按纪律**抬严**，并附新旧对照读数：
   //     改前 `--selftest` = **19 项全通过**（floor 19）；改后 = **20 项全通过**（floor 20）。
+  //   ★ 2026-09-27 微批 7 自首：20 → **21**（新增 ⑭ 一条，判据⑩ 的纯函数部分）⇒ 同样**抬严**：
+  //     改前 = **20 项全通过**（floor 20）；改后 = **21 项全通过**（floor 21）。
   const ran = pass + fails.length + skipCount;
   if (ran < SELFTEST_FLOOR) fails.push(`项数下限闸：本轮只跑了 ${ran} 项 < 下限 ${SELFTEST_FLOOR}（有判据被静默跳过 ⇒ 不许报绿）`);
   if (skipCount) console.log(`  ⏭ 本轮有 ${skipCount} 条"不适用"（已显式记账，既不计通过也不静默）：${skips.join('；')}`);
@@ -709,6 +740,44 @@ for (const c of cand) {
   writes.push({ rel: c.rel.replace(/\\/g, '/'), text: t });
 }
 log(`【替换表】主人QQ→<主人QQ> · 群号 ${(R.id.groupIds || []).length} 个→<群A/B> · 账号→<账号>@ · 服务器前缀→<服务器IP> · 用户名(${R.user})→<你>`);
+/**
+ * 判据⑩（2026-09-27 微批 7）：**包内引用必须落地** —— 包里的 `.md` 引用了 `docs\X.md`，那一份就必须在包里。
+ * ★ 豁免只有下面这一张表（每条**必须带理由**）；上游路径（`qq-bridge\docs\PROJECT_GUIDE.md` 这类）
+ *   **天然不匹配本判据的形状**（不以 `docs` 开头）⇒ 不需要豁免。
+ * ★ 函数声明 ⇒ 提升 ⇒ `--selftest` 的 ⑭ 能在主流程之前直接打它。
+ */
+const ALLOW_ABSENT_REFS = [
+  ['结构快照.md', '**运行后生成**：`tools\\structure-snapshot.mjs` 的产物，包里永远不带（引用处已注明"运行后生成"）'],
+];
+function danglingRefs(files, opts = {}) {
+  const allow = new Set(opts.allowAbsent || []);
+  const shipped = new Set(files.map((f) => String(f.rel).replace(/\\/g, '/')));
+  const out = [];
+  const re = /`docs[\\/]([^`]+?\.md)`|\]\(\s*docs[\\/]([^)\s]+?\.md)\s*\)/g;
+  for (const f of files) {
+    if (!/\.md$/i.test(String(f.rel))) continue;
+    for (const m of String(f.text).matchAll(re)) {
+      const name = (m[1] || m[2] || '').replace(/\\/g, '/');
+      if (!name) continue;
+      if (shipped.has('docs/' + name)) continue;
+      if (allow.has(name)) continue;
+      out.push({ file: String(f.rel), ref: 'docs/' + name });
+    }
+  }
+  return out;
+}
+// ★ 判据⑩ 执行点：**在任何写盘之前**（`--dry-run` 也跑 —— 干跑就该看得见悬空）
+{
+  const bad = danglingRefs(writes, { allowAbsent: ALLOW_ABSENT_REFS.map(([n]) => n) });
+  if (bad.length) {
+    console.error(`❌ 判据⑩ 包内有 ${bad.length} 处**悬空引用**（写了 docs\\X.md，但那一份不在包里）⇒ 拒交付，**未写任何东西**：`);
+    for (const b of bad) console.error(`   · ${b.file} → ${b.ref}`);
+    console.error(`   豁免清单 ${ALLOW_ABSENT_REFS.length} 条（每条都有理由）：${ALLOW_ABSENT_REFS.map(([n, w]) => `${n}（${w}）`).join('；')}`);
+    console.error('   处置：要么把那份文档也放进包（加进 `DOCS` 清单），要么**把那行引用改掉或删掉** —— 别让拿到包的人扑空。');
+    process.exit(4);
+  }
+  log(`【判据⑩】包内引用落地：${writes.length} 份里没有悬空引用（豁免 ${ALLOW_ABSENT_REFS.length} 条）`);
+}
 log(`【候选】${writes.length} 份（带：README＋CONTRIBUTING＋LICENSE＋示例配置＋tools\\ 整目录）· 排除 ${EXCLUDE_A.length} 份：${EXCLUDE_A.map(([f]) => f.split('/').pop()).join('、')}`);
 log(`【替换】共 ${replaced} 处${replaced ? '' : '（这个仓库的对外候选里没有身份真值）'}`);
 for (const r of rows.filter((x) => x.replaced)) log(`  ${r.rel}：${r.replaced} 处 —— ${Object.entries(r.kinds).map(([k, v]) => `${k}×${v}`).join('、')}`);

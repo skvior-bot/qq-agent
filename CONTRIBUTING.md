@@ -24,10 +24,8 @@
 | 装 / 换 DSH 端（preset + MCP） | `qq-bridge\docs\DSH_SETUP.md`（**需先 clone 上游 qq-bridge**） |
 | 架构、数据流、配置全解 | `qq-bridge\docs\PROJECT_GUIDE.md`（**需先 clone 上游 qq-bridge**） |
 | 运行模式与权限分层 | `qq-bridge\RULES.md`（**需先 clone 上游 qq-bridge**） |
-| 启动链与已知坑 | `docs\启动与踩坑.md` |
-| 某个路径是什么、什么时候才进 | `docs\目录地图.md` |
-| 搬到服务器上跑 | `docs\部署到服务器.md` |
-| 目标形态与产品设计 | `docs\qq-agent-产品设计.md` |
+| 某个路径是什么、什么时候才进 | `docs\仓库导览.md` |
+| 搬到服务器上跑 | `docs\服务器部署.md` |
 | 环境层配置模板（照着填） | `agent.config.example.json` |
 | 启动、关闭、自检、运维脚本 | `tools\`（整目录；自检入口 `node tools\self-check.mjs`） |
 

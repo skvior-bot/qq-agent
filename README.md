@@ -119,6 +119,8 @@ DSH 自己还带一个 Web GUI（默认 `http://127.0.0.1:3080`），你照常�
 | **装起来**（从零到第一次启动） | `docs\安装.md` ★ 面向使用者，不含内部令牌链/端口/台账 |
 | `tools\` 里有哪些脚本、什么时候该用 | `docs\工具一览.md` ★ 面向使用者 |
 | ★ **怎么省钱、怎么不踩坑**（我们目前的策略） | [`docs\省词元与稳定性.md`](docs/省词元与稳定性.md) ★ 面向使用者 |
+| ★ **仓库里哪个路径是什么、什么时候才进** | [`docs\仓库导览.md`](docs/仓库导览.md) ★ 面向使用者 |
+| ★ **搬到一台常开的机器上跑**（服务器 / 旧 PC） | [`docs\服务器部署.md`](docs/服务器部署.md) ★ 面向使用者 |
 | 最短启动路径、桥接鸟瞰 | `qq-bridge\README.md`（**需先 clone 上游 qq-bridge**） |
 | 装 / 换 DSH 端（preset + MCP） | `qq-bridge\docs\DSH_SETUP.md`（**需先 clone 上游 qq-bridge**） |
 | 架构、数据流、配置全解 | `qq-bridge\docs\PROJECT_GUIDE.md`（**需先 clone 上游 qq-bridge**） |
