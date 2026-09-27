@@ -37,15 +37,23 @@ function Test-PortOpen([int]$Port) {
     } catch { return $false }
 }
 function Open-DshPage {
-    $panels = Join-Path $PSScriptRoot 'panels.ps1'
-    if (Test-Path $panels) {
-        try {
-            Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
-                '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $panels, 'open', '-DshOnly') | Out-Null
-            return
-        } catch { }
+    param([switch]$Direct)
+    #   -Direct（2026-09-27 微批 9）：**不经过 panels.ps1 的去重 / 状态判定**，直接把地址交给系统开。
+    #   为什么要这一支：panels.ps1 会按自己的页面状态判断"要不要开"，判成"已经有了"时**什么都不开、也不报**
+    #   ⇒ 主人双击「只开DSH.cmd」后窗口一闪、页面没出来（他报的「不会开网站」就是这个形状）。
+    #   主动双击＝意图明确 ⇒ 这一支必须真的把页面打开（多一个标签页，比"看不到页面"好得多）。
+    if (-not $Direct) {
+        $panels = Join-Path $PSScriptRoot 'panels.ps1'
+        if (Test-Path $panels) {
+            try {
+                Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $panels, 'open', '-DshOnly') | Out-Null
+                return
+            } catch { }
+        }
     }
-    try { Start-Process ('http://127.0.0.1:' + $DshPort) | Out-Null } catch { }
+    try { Start-Process ('http://127.0.0.1:' + $DshPort) | Out-Null }
+    catch { Write-Host ('  ⚠ 页面没打开（' + $_.Exception.Message + '）—— 请手动打开 http://127.0.0.1:' + $DshPort) }
 }
 
 Write-Host ''
@@ -59,14 +67,23 @@ Write-Host ''
 
 if (Test-PortOpen $DshPort) {
     Write-Host ('  DSH 已经在跑（:' + $DshPort + ' 在听）—— 不重复起（起第二个会抢端口）。')
-    # 2026-09-26（小镜复核 788f957 时量到的**既有**口子）：这条快路径原来排在 -DryRun 检查之前
-    # ⇒ 只要 DSH 已在听，`-DryRun` 也会走到 Open-DshPage，**真开一个浏览器窗口**（抢主人焦点，红线 6）。
-    # ⇒ 干跑一律不碰页面。
+    # ★ 这一支的判据（2026-09-27 微批 9，主人亲报「只启动dsh还是有问题 不会开网站」后定）：
+    #   · 双击 / 正常调用 ⇒ **真的把页面打开**（`-Direct`：不走 panels.ps1 的去重判定）。
+    #     理由：**主人主动双击＝意图明确**，此时开浏览器正是他要的；红线 6 管的是"**未经请求**地抢焦点"，不是这个。
+    #   · `-DryRun` ⇒ 一个窗口都不开（干跑只印）。
+    #   · `-NoOpen` ⇒ 只印，不开（保住这个开关的原意）。
+    #   历史（小镜 2026-09-26 量到的既有口子，已修）：这条快路径原来排在 -DryRun 检查之前 ⇒ DSH 已在听时
+    #   干跑也会走到开页那一行，真开一个浏览器窗口。
     if ($DryRun) {
         Write-Host '  [干跑] 到此为止：不会开页、也不会起第二个 DSH。'
         exit 0
     }
-    if (-not $NoOpen) { Open-DshPage }
+    if ($NoOpen) {
+        Write-Host '  -NoOpen：只打印，不开页面。'
+        exit 0
+    }
+    Write-Host '  正在打开页面…'
+    Open-DshPage -Direct
     exit 0
 }
 
