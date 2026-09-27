@@ -67,7 +67,7 @@ function Get-LatestDshLog {
     if ($f) { return $f.FullName }
     return ''
 }
-function Get-DshUrlWithToken {
+function Get-DshUrlFromLog {
     param([string]$LogPath)
     foreach ($p in @($LogPath, (Get-LatestDshLog))) {
         if (-not $p -or -not (Test-Path $p)) { continue }
@@ -77,6 +77,9 @@ function Get-DshUrlWithToken {
             if ($m.Success) { return $m.Value }
         } catch { }
     }
+    return ''
+}
+function Get-DshUrlFromConfig {
     try {
         $cfgPath = Join-Path $Root 'qq-bridge\config.json'
         if (Test-Path $cfgPath) {
@@ -89,11 +92,12 @@ function Get-DshUrlWithToken {
 }
 
 function Open-DshPage {
-    param([switch]$Direct)
+    param([switch]$Direct, [switch]$Wait)
     #   -Direct（2026-09-27 微批 9）：**不经过 panels.ps1 的去重 / 状态判定**，直接把地址交给系统开。
     #   为什么要这一支：panels.ps1 会按自己的页面状态判断"要不要开"，判成"已经有了"时**什么都不开、也不报**
     #   ⇒ 主人启动后窗口一闪、页面没出来（他报的「不会开网站」就是这个形状）。
     #   主动跑这个入口＝意图明确 ⇒ 这一支必须真的把页面打开（多一个标签页，比"看不到页面"好得多）。
+    #   -Wait：**"DSH 刚起完"那一支**才传（见下）；"已在跑"那一支不传 —— 那时不该再等。
     if (-not $Direct) {
         $panels = Join-Path $PSScriptRoot 'panels.ps1'
         if (Test-Path $panels) {
@@ -107,10 +111,27 @@ function Open-DshPage {
     # ★★ 2026-09-27 修：这一支原来**直接开裸地址** ⇒ DSH 回一张 authentication required 页
     #    （主人报的「页面打不开」就是这个）—— 现在**必须带令牌**才开。
     #    `$log` 是本次启动的日志（"DSH 已在跑"那一支还没定义它 ⇒ 传 $null，函数自己去找最新那份）。
-    $u = Get-DshUrlWithToken -LogPath $log
+    $u = Get-DshUrlFromLog -LogPath $log
+    $src = '启动日志'
+    if (-not $u -and $Wait) {
+        # ★★★ 2026-09-27 第三刀（主人第二次截图实证）：**"端口在听" ≠ "DSH 把那行带令牌的地址写进日志了"**
+        #   —— 两者之间有窗口期。原来这里抓不到就**立刻**退到 `config.json`，而那一刻它常常还是**上一代**的
+        #   令牌（守窗器同步要慢一拍）⇒ 照样开出一张 authentication required 页
+        #   （实测：开出去那个页面的令牌指纹与"日志里的""config 里的"**两份都不同**，正是这个窗口期）。
+        #   ⇒ 现在**先等**：最多 20 秒、1 秒一探，等 DSH 自己把那行地址打出来。
+        for ($i = 1; $i -le 20; $i++) {
+            Start-Sleep -Seconds 1
+            $u = Get-DshUrlFromLog -LogPath $log
+            if ($u) { break }
+        }
+    }
+    if (-not $u) {
+        $u = Get-DshUrlFromConfig
+        if ($u) { $src = 'config.json（★ 可能已过期）' }
+    }
     if ($u) {
         # 令牌是凭据（红线 3）：打印时打码，与 panels.ps1 同口径。
-        Write-Host ('  → 打开（带令牌）：' + ($u -replace '([?&])token=[^&]*', '$1token=***'))
+        Write-Host ('  → 打开（带令牌 · 来源：' + $src + '）：' + ($u -replace '([?&])token=[^&]*', '$1token=***'))
         try { Start-Process $u | Out-Null; return } catch { }
     }
     Write-Host '  ⚠ 没拿到带令牌的地址 ⇒ 本次只能开**裸地址**，DSH 会回一张 authentication required 页。'
@@ -208,7 +229,7 @@ if ($ok) {
     #   `panels.ps1` 的去重判定，判成"页面已经有了"就**什么都不开、也不报** —— 正是主人报的
     #   「页面不打开」。微批 9 只修了上面"已在跑"那一支（见前面的 `Open-DshPage -Direct`），这条漏了。
     #   主动跑本脚本＝意图明确 ⇒ 与那一支同口径：直接开。
-    if (-not $NoOpen) { Open-DshPage -Direct }
+    if (-not $NoOpen) { Open-DshPage -Direct -Wait }
 } else {
     Write-Host ('  ⚠ ' + $waitSec + ' 秒内没等到 :' + $DshPort + ' —— 它**可能还在起**：')
     Write-Host ('     先等十几秒，再打开 http://127.0.0.1:' + $DshPort + '（或到 DSH-Web 窗口里输 r 重起）')
