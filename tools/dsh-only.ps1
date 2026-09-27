@@ -7,6 +7,11 @@
     （原话「那个只启动dsh可以不要了 bug太多了 我以后就自己用cmd启动了」）⇒ 现在只剩命令行这一条路。
   ★ 撤除时一并修了一处漏判：原来"DSH 刚起来"那一支开页时没带 -Direct（见文件末尾），
     仍会被 panels.ps1 判成"页面已经有了"⇒ 什么都不开。现在两支同口径。
+  ★★ 同日第二刀（**更要紧**）：`-Direct` 那一支原来**直接开裸地址** —— 而 DSH Web **拒绝裸地址**
+    （浏览器只显示 `dsh web authentication required. reopen the URL printed by dsh web`）
+    ⇒ 主人报的「页面打不开」有一半是这个（2026-09-27 截图实证）。
+    现在 `Open-DshPage` **必须带令牌**才开页；令牌从**那只 DSH 自己打印在启动日志里的地址**取，
+    口径与打码方式见下面的 `Get-DshUrlWithToken`。
 
   为什么单独一个入口：一键启动.cmd 会把 SnowLuma 与 qq-bridge 一起起出来，而同一个 QQ 号
   只能一处在线 ⇒ 本机起了会**抢号**（主人 2026-09-26 的处境：QQ 岗已经在服务器上）。
@@ -43,12 +48,52 @@ function Test-PortOpen([int]$Port) {
         $c.Close(); return $false
     } catch { return $false }
 }
+# ── 取"带令牌的 DSH 地址" ───────────────────────────────────────────────────
+#   ★ 为什么必须带令牌（2026-09-27 截图实证）：DSH Web **拒绝裸地址** —— 浏览器只显示
+#     `dsh web authentication required. reopen the URL printed by dsh web.`
+#     ★ 判据口径与 `panels.ps1:1023-1028` 那条**是同一条**："抓到一个 http 串"不算数，
+#       **必须里面真有 `token=`** —— 否则就是"静默开出一张没带令牌的登录页，谁都不知道"。
+#   来源优先级（越靠前越权威）：
+#     ① 本次启动的那份日志（= DSH 自己打印的 `dsh web: http://127.0.0.1:<port>/?token=…`）
+#     ② 最近一份启动日志（DSH 已在跑时，说不出"本次"是哪份）
+#     ③ `qq-bridge\config.json` 的 `dsh.authToken`（**口径同 panels.ps1 的 Get-DshToken**）
+#        ⚠ 这条路只在 `start-all` 同步过之后才准；"只开 DSH"模式**故意不跑 start-all**
+#          ⇒ 它常常是**上一代**的令牌（自检里那句「令牌不同步（预期）」指的就是它）⇒ 只当退路。
+function Get-LatestDshLog {
+    $dir = Join-Path $env:USERPROFILE '.dsh\guard\logs'
+    if (-not (Test-Path $dir)) { return '' }
+    $f = Get-ChildItem (Join-Path $dir 'server-*.out.log') -ErrorAction SilentlyContinue |
+         Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($f) { return $f.FullName }
+    return ''
+}
+function Get-DshUrlWithToken {
+    param([string]$LogPath)
+    foreach ($p in @($LogPath, (Get-LatestDshLog))) {
+        if (-not $p -or -not (Test-Path $p)) { continue }
+        try {
+            $m = [regex]::Match((Get-Content -LiteralPath $p -Raw -ErrorAction Stop),
+                                'https?://127\.0\.0\.1:\d+/[^\s"'']*[?&]token=[^\s"'']+')
+            if ($m.Success) { return $m.Value }
+        } catch { }
+    }
+    try {
+        $cfgPath = Join-Path $Root 'qq-bridge\config.json'
+        if (Test-Path $cfgPath) {
+            $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $t = ([string]$cfg.dsh.authToken).Trim()
+            if ($t) { return ('http://127.0.0.1:' + $DshPort + '/?token=' + [uri]::EscapeDataString($t)) }
+        }
+    } catch { }
+    return ''
+}
+
 function Open-DshPage {
     param([switch]$Direct)
     #   -Direct（2026-09-27 微批 9）：**不经过 panels.ps1 的去重 / 状态判定**，直接把地址交给系统开。
     #   为什么要这一支：panels.ps1 会按自己的页面状态判断"要不要开"，判成"已经有了"时**什么都不开、也不报**
     #   ⇒ 主人启动后窗口一闪、页面没出来（他报的「不会开网站」就是这个形状）。
-    #   主动双击＝意图明确 ⇒ 这一支必须真的把页面打开（多一个标签页，比"看不到页面"好得多）。
+    #   主动跑这个入口＝意图明确 ⇒ 这一支必须真的把页面打开（多一个标签页，比"看不到页面"好得多）。
     if (-not $Direct) {
         $panels = Join-Path $PSScriptRoot 'panels.ps1'
         if (Test-Path $panels) {
@@ -59,6 +104,20 @@ function Open-DshPage {
             } catch { }
         }
     }
+    # ★★ 2026-09-27 修：这一支原来**直接开裸地址** ⇒ DSH 回一张 authentication required 页
+    #    （主人报的「页面打不开」就是这个）—— 现在**必须带令牌**才开。
+    #    `$log` 是本次启动的日志（"DSH 已在跑"那一支还没定义它 ⇒ 传 $null，函数自己去找最新那份）。
+    $u = Get-DshUrlWithToken -LogPath $log
+    if ($u) {
+        # 令牌是凭据（红线 3）：打印时打码，与 panels.ps1 同口径。
+        Write-Host ('  → 打开（带令牌）：' + ($u -replace '([?&])token=[^&]*', '$1token=***'))
+        try { Start-Process $u | Out-Null; return } catch { }
+    }
+    Write-Host '  ⚠ 没拿到带令牌的地址 ⇒ 本次只能开**裸地址**，DSH 会回一张 authentication required 页。'
+    Write-Host '     （启动日志里没有 DSH 打印的那行 URL，config.json 里也没有可用令牌）'
+    Write-Host '     多半是因为**当前这只 DSH 不是本脚本起的** —— 手敲 dsh web 不写启动日志，'
+    Write-Host '     所以既拿不到它的令牌（工具会 401），也开不出能用的页面。'
+    Write-Host '     修法：关掉它，再用本脚本起一次。'
     try { Start-Process ('http://127.0.0.1:' + $DshPort) | Out-Null }
     catch { Write-Host ('  ⚠ 页面没打开（' + $_.Exception.Message + '）—— 请手动打开 http://127.0.0.1:' + $DshPort) }
 }
