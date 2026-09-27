@@ -636,7 +636,7 @@ $script:watch = @{
 #   打开之后：不再报「⚠ QQ 未登录」、不劝他按 s、**也不补缺 QQ 那两只**（那条走 start-all -NoRestart，
 #   会把 SnowLuma 与桥接一起起出来 ✗ —— 搬家之后那两只在本机是故意不跑的，起了会抢号）；
 #   ★ 2026-09-26 修：**控制面 :3101 照补**（走 tools\control-plane.ps1 那一份唯一起法；它与 QQ 无关）。
-#   原来这里是"整段跳过补缺"⇒ 按一次 r / 走一次只开DSH，:3101 死了就**没人管**，主人看到的就是
+#   原来这里是"整段跳过补缺"⇒ 按一次 r，:3101 死了就**没人管**，主人看到的就是
 #   "总控的灯不见了，我刷新了没用"（面板每 5 秒拉一次 :3101，服务不存在的话重试也救不回来）。
 #   改成一句**说明**：QQ 在服务器上跑、掉线会推手机（Server酱）。
 $script:QqMovedFile = [string]$env:DSH_WINDOW_QQ_MOVED_FILE
@@ -1270,7 +1270,7 @@ function Invoke-MissingServices {
             Write-RepairNote '控制面本来就在监听 ⇒ 什么都没做（不会起第二个）。'
         } else {
             Write-RepairNote ('⚠ 控制面**还是没起来**（{0}）—— 页面面板会显示"读不到状态"（三件套不受影响）。' -f $cr.why) -Always
-            Write-RepairNote '下一步：双击一次「只开DSH.cmd」（或再按一次 r）。' -Always
+            Write-RepairNote '下一步：跑一次 tools\dsh-only.ps1（或再按一次 r）。' -Always
         }
         return @{ act = $(if ($cr.ok) { 'repaired' } else { 'failed' }); mode = 'control-only'; why = $cr.why }
     }

@@ -738,12 +738,12 @@ switch ($Action) {
     if ($act.http -and $act.http.receipt -and $act.http.receipt.plan) { $plan = [string]$act.http.receipt.plan }
     # ★ 2026-09-26（P1）：QQ 那套不在本机 ⇒ 本机**没有「全量」可重启**（本机只剩 DSH），而 一键启动.cmd
     #   会把 SnowLuma 与桥接起出来 ⇒ **抢号** ⇒ 这里 fail-closed 拒绝（退出码 6），并把该走的路说清楚。
-    #   为什么不是「改成跑只开DSH.cmd」：那条入口见 DSH 在跑就退出（不先停）⇒ 会变成**假重启**（比拒绝更坏）。
+    #   为什么不是「改成跑 tools\dsh-only.ps1」：它见 DSH 在跑就退出（不先停）⇒ 会变成**假重启**（比拒绝更坏）。
     if (Test-QqServicesNotLocal) {
       Say '  [拒绝] QQ 那套不在本机（搬家之后 / 只开 DSH 模式）⇒ 本机没有「全量」可重启，而 一键启动.cmd 会把'
       Say '         SnowLuma 与桥接起出来 ⇒ **抢号**（服务器上那只会被顶下线）。这一步不做（退出码 6）。'
       Say '  该走的路：① 面板「重起控制面」（只动 :3101）② DSH-Web 窗口里按 r（重起 DSH，那一代会自动补控制面）'  # port-literal-ok: 拒绝理由的文案里提到面板端口，不是配置来源（端口一律走 env-config.ps1）
-      Say '           ③ DSH 没在跑时双击 只开DSH.cmd。'
+      Say '           ③ DSH 没在跑时跑 tools\dsh-only.ps1（原「只开DSH.cmd」入口 2026-09-27 已撤除）。'
       exit 6
     }
     $launcher = Join-Path $Root '一键启动.cmd'

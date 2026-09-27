@@ -60,7 +60,7 @@ export function judgeQqPort({ name, port, open, qqSide = false, moved = false })
  *
  * 为什么会不同步（2026-09-26 协调线判的根因，我按代码复核）：DSH **每次启动都会生成新 token**，
  * 把它同步进 `qq-bridge\config.json` 的 `dsh.authToken` 是 **`tools\start-all.ps1` 的活**；
- * 而「只开 DSH」入口（根目录 `只开DSH.cmd` = `tools\dsh-only.ps1`）**故意不跑 start-all**
+ * 而「只开 DSH」这条路（`tools\dsh-only.ps1`；原根目录 `只开DSH.cmd` 入口 2026-09-27 已撤除）**故意不跑 start-all**
  * ⇒ 日志里是新 token、`config.json` 里还是上一代的。
  *
  * 本地 QQ 已迁服务器时这**不是故障**：QQ 那套在服务器上跑，本地桥接**不是活路径**

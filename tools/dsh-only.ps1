@@ -1,5 +1,12 @@
 ﻿<#
-  只开 DSH —— QQ 搬到服务器之后，本机只需要 DSH Web 时用这个（双击根目录的「只开DSH.cmd」）。
+  只开 DSH —— QQ 搬到服务器之后，本机只需要 DSH Web 时用这个。
+
+  用法（工作区根目录下跑；脚本按 $PSScriptRoot 定位自己，所以从别处跑也行）：
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\dsh-only.ps1
+  ★ 根目录原来那个双击入口「只开DSH.cmd」调的就是本脚本，**2026-09-27 按主人要求撤除**
+    （原话「那个只启动dsh可以不要了 bug太多了 我以后就自己用cmd启动了」）⇒ 现在只剩命令行这一条路。
+  ★ 撤除时一并修了一处漏判：原来"DSH 刚起来"那一支开页时没带 -Direct（见文件末尾），
+    仍会被 panels.ps1 判成"页面已经有了"⇒ 什么都不开。现在两支同口径。
 
   为什么单独一个入口：一键启动.cmd 会把 SnowLuma 与 qq-bridge 一起起出来，而同一个 QQ 号
   只能一处在线 ⇒ 本机起了会**抢号**（主人 2026-09-26 的处境：QQ 岗已经在服务器上）。
@@ -40,7 +47,7 @@ function Open-DshPage {
     param([switch]$Direct)
     #   -Direct（2026-09-27 微批 9）：**不经过 panels.ps1 的去重 / 状态判定**，直接把地址交给系统开。
     #   为什么要这一支：panels.ps1 会按自己的页面状态判断"要不要开"，判成"已经有了"时**什么都不开、也不报**
-    #   ⇒ 主人双击「只开DSH.cmd」后窗口一闪、页面没出来（他报的「不会开网站」就是这个形状）。
+    #   ⇒ 主人启动后窗口一闪、页面没出来（他报的「不会开网站」就是这个形状）。
     #   主动双击＝意图明确 ⇒ 这一支必须真的把页面打开（多一个标签页，比"看不到页面"好得多）。
     if (-not $Direct) {
         $panels = Join-Path $PSScriptRoot 'panels.ps1'
@@ -138,7 +145,11 @@ for ($i = 1; $i -le $waitSec; $i++) {
 }
 if ($ok) {
     Write-Host ('  ✓ DSH 起来了（:' + $DshPort + ' 在听，等了约 ' + $i + ' 秒）')
-    if (-not $NoOpen) { Open-DshPage }
+    # ★ 2026-09-27（撤除 `只开DSH.cmd` 时一并修）：这一支原来**不带 `-Direct`** ⇒ 刚起来这次仍走
+    #   `panels.ps1` 的去重判定，判成"页面已经有了"就**什么都不开、也不报** —— 正是主人报的
+    #   「页面不打开」。微批 9 只修了上面"已在跑"那一支（见前面的 `Open-DshPage -Direct`），这条漏了。
+    #   主动跑本脚本＝意图明确 ⇒ 与那一支同口径：直接开。
+    if (-not $NoOpen) { Open-DshPage -Direct }
 } else {
     Write-Host ('  ⚠ ' + $waitSec + ' 秒内没等到 :' + $DshPort + ' —— 它**可能还在起**：')
     Write-Host ('     先等十几秒，再打开 http://127.0.0.1:' + $DshPort + '（或到 DSH-Web 窗口里输 r 重起）')
@@ -146,7 +157,9 @@ if ($ok) {
     Write-Host ('     ' + $log)
     Write-Host '     ⚠ 别改用 cmd 手动起 DSH：那样不会写这份日志，日志里就没有它的 token，'
     Write-Host '       后面所有工具（sessions.mjs / notify-session.mjs / 控制面）都会 401。'
-    # 2026-09-26（小镜指出的条件）：这里原来 exit 0 ⇒ `只开DSH.cmd` 的 `if errorlevel 1 pause` 不生效
-    # ⇒ 双击时上面那段救命文案**随窗口一起消失**，等于这次修的目的只达成一半。改非 0 退出让 pause 留住它。
+    # 2026-09-26（小镜指出的条件）：这里原来 exit 0 ⇒ 上面那段救命文案会被调用方的 pause 吞掉。
+    # ★ 2026-09-27：入口 `只开DSH.cmd` 撤除后，"pause 那一层"没有了 ⇒ 这段文案在终端里**只出现一次**、
+    #   往上滚就没了，所以更要紧（尤其「别改用 cmd 手动起」那两句：手动起不写这份日志 ⇒ 全套工具 401）。
+    #   退出码保持非 0：失败就该是失败，控制面板 / 计划任务这类调用方能判。
     exit 1
 }
